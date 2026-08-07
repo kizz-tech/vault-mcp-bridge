@@ -1,0 +1,6 @@
+views:
+  - type: table
+    name: Synthetic view
+filters:
+  and:
+    - file.name != "secret"

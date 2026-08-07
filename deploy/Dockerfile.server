@@ -1,0 +1,59 @@
+# The multi-platform index digest is intentionally pinned. Renovation should
+# update the tag and digest together after CI rebuilds and scans the image.
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
+FROM ${NODE_IMAGE} AS build
+
+ENV COREPACK_HOME=/tmp/corepack
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+WORKDIR /workspace
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY apps/server/package.json apps/server/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/vault-core/package.json packages/vault-core/package.json
+RUN pnpm install --frozen-lockfile
+
+COPY apps/server apps/server
+COPY packages/contracts packages/contracts
+COPY packages/vault-core packages/vault-core
+COPY tsconfig.base.json eslint.config.mjs vitest.config.ts ./
+RUN pnpm --filter @vault-mcp-bridge/server... build
+# pnpm 10 refuses non-injected workspace packages in the default deploy
+# implementation. `--legacy` is the supported compatibility switch for this
+# workspace; keep it explicit until every workspace package is injected.
+RUN pnpm --filter @vault-mcp-bridge/server deploy --prod --legacy /out
+
+ARG NODE_IMAGE
+FROM ${NODE_IMAGE} AS runtime
+
+ARG BUILD_DATE=""
+ARG SOURCE=""
+ARG VCS_REF=""
+ARG VERSION="0.1.0"
+LABEL org.opencontainers.image.title="Vault Bridge server" \
+      org.opencontainers.image.description="Read-only MCP replica for an Obsidian-compatible vault" \
+      org.opencontainers.image.source=$SOURCE \
+      org.opencontainers.image.created=$BUILD_DATE \
+      org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+ENV NODE_ENV=production \
+    SERVER_HOST=0.0.0.0 \
+    SERVER_PORT=8787 \
+    SERVER_DATABASE_PATH=/var/lib/vault-mcp-bridge/vault.sqlite
+
+RUN groupadd --system --gid 10001 bridge \
+  && useradd --system --uid 10001 --gid bridge --home-dir /nonexistent --shell /usr/sbin/nologin bridge \
+  && mkdir -p /var/lib/vault-mcp-bridge \
+  && chown -R bridge:bridge /var/lib/vault-mcp-bridge
+WORKDIR /app
+COPY --from=build --chown=bridge:bridge /out/ ./
+
+# This is container metadata, not a published host port. The generated runtime
+# attaches the service only to its internal network.
+EXPOSE 8787
+USER bridge
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD node --input-type=module -e "const r=await fetch('http://127.0.0.1:8787/readyz'); if(!r.ok) process.exit(1)"
+ENTRYPOINT ["node", "dist/index.js"]

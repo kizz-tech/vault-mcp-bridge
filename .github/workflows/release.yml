@@ -1,0 +1,310 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: "Sign and notarize the macOS package (requires Apple secrets)"
+        required: true
+        default: false
+        type: boolean
+      publish:
+        description: "Push the multi-arch image to GHCR"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  PNPM_VERSION: 10.33.0
+  NODE_VERSION: 24.x
+  SERVER_IMAGE_NAME: ghcr.io/${{ github.repository }}/vault-mcp-bridge-server
+  EDGE_IMAGE_NAME: ghcr.io/${{ github.repository }}/vault-mcp-bridge-edge
+
+jobs:
+  preflight:
+    name: release preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run repository checks
+        run: pnpm check
+      - name: Validate release surfaces
+        run: |
+          node scripts/validate-compose.mjs deploy/runtime/compose.contract.yaml --strict
+          node scripts/validate-release.mjs
+
+  desktop-unsigned:
+    name: macOS unsigned package
+    needs: preflight
+    runs-on: macos-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build unsigned package
+        run: pnpm --filter @vault-mcp-bridge/desktop package
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Verify unsigned macOS artifacts
+        run: node scripts/verify-macos-artifacts.mjs apps/desktop/out
+      - name: Create and verify manifest
+        run: |
+          node scripts/generate-release-manifest.mjs --artifacts apps/desktop/out/make --output apps/desktop/out/release-manifest.json --version "${GITHUB_REF_NAME}"
+          node scripts/verify-release-manifest.mjs apps/desktop/out/release-manifest.json apps/desktop/out/make
+      - name: Upload unsigned package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vault-bridge-macos-unsigned-${{ github.sha }}
+          path: |
+            apps/desktop/out/make/**
+            apps/desktop/out/release-manifest.json
+          if-no-files-found: error
+
+  desktop-signed:
+    name: macOS signed and notarized package
+    if: github.event_name == 'workflow_dispatch' && inputs.sign == true
+    needs: preflight
+    runs-on: macos-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Require signing credentials
+        env:
+          SIGN_IDENTITY: ${{ secrets.VAULT_BRIDGE_OSX_SIGN_IDENTITY }}
+          CERTIFICATE: ${{ secrets.VAULT_BRIDGE_APPLE_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.VAULT_BRIDGE_APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.VAULT_BRIDGE_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.VAULT_BRIDGE_APPLE_TEAM_ID }}
+          APP_PASSWORD: ${{ secrets.VAULT_BRIDGE_APPLE_APP_PASSWORD }}
+        run: |
+          test -n "$SIGN_IDENTITY" || { echo "missing VAULT_BRIDGE_OSX_SIGN_IDENTITY" >&2; exit 1; }
+          test -n "$CERTIFICATE" || { echo "missing VAULT_BRIDGE_APPLE_CERTIFICATE_BASE64" >&2; exit 1; }
+          test -n "$CERTIFICATE_PASSWORD" || { echo "missing VAULT_BRIDGE_APPLE_CERTIFICATE_PASSWORD" >&2; exit 1; }
+          test -n "$APPLE_ID" || { echo "missing VAULT_BRIDGE_APPLE_ID" >&2; exit 1; }
+          test -n "$APPLE_TEAM_ID" || { echo "missing VAULT_BRIDGE_APPLE_TEAM_ID" >&2; exit 1; }
+          test -n "$APP_PASSWORD" || { echo "missing VAULT_BRIDGE_APPLE_APP_PASSWORD" >&2; exit 1; }
+      - name: Set up signing keychain
+        env:
+          CERTIFICATE: ${{ secrets.VAULT_BRIDGE_APPLE_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.VAULT_BRIDGE_APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/vault-bridge-signing.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/vault-bridge-signing.keychain-db"
+          printf '%s' "$CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$CERTIFICATE_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$CERTIFICATE_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+      - name: Set up pnpm and Node
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build signed and notarized package
+        run: pnpm --filter @vault-mcp-bridge/desktop package
+        env:
+          VAULT_BRIDGE_OSX_SIGN_IDENTITY: ${{ secrets.VAULT_BRIDGE_OSX_SIGN_IDENTITY }}
+          VAULT_BRIDGE_APPLE_ID: ${{ secrets.VAULT_BRIDGE_APPLE_ID }}
+          VAULT_BRIDGE_APPLE_TEAM_ID: ${{ secrets.VAULT_BRIDGE_APPLE_TEAM_ID }}
+          VAULT_BRIDGE_APPLE_APP_PASSWORD: ${{ secrets.VAULT_BRIDGE_APPLE_APP_PASSWORD }}
+      - name: Verify signed and notarized macOS artifacts
+        run: node scripts/verify-macos-artifacts.mjs apps/desktop/out --notarized
+      - name: Create and verify manifest
+        run: |
+          node scripts/generate-release-manifest.mjs --artifacts apps/desktop/out/make --output apps/desktop/out/release-manifest.json --version "${GITHUB_REF_NAME}"
+          node scripts/verify-release-manifest.mjs apps/desktop/out/release-manifest.json apps/desktop/out/make
+      - name: Upload signed package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vault-bridge-macos-signed-${{ github.sha }}
+          path: |
+            apps/desktop/out/make/**
+            apps/desktop/out/release-manifest.json
+          if-no-files-found: error
+
+  container:
+    name: ${{ matrix.service }} scanned multi-arch candidate
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: server
+            dockerfile: deploy/Dockerfile.server
+            image: ghcr.io/${{ github.repository }}/vault-mcp-bridge-server
+          - service: edge
+            dockerfile: deploy/Dockerfile.edge
+            image: ghcr.io/${{ github.repository }}/vault-mcp-bridge-edge
+    steps:
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Prepare OCI labels
+        id: oci
+        shell: bash
+        run: |
+          echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+          echo "source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver-opts: image=moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+      - name: Build unpublished multi-arch OCI candidate
+        id: candidate
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: ${{ matrix.image }}:${{ github.sha }}
+          build-args: |
+            VERSION=${{ steps.oci.outputs.version }}
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.oci.outputs.created }}
+            SOURCE=${{ steps.oci.outputs.source }}
+          outputs: type=oci,dest=/tmp/vault-mcp-bridge-${{ matrix.service }}.oci.tar
+          provenance: mode=max
+          sbom: generator=docker.io/docker/buildkit-syft-scanner@sha256:79e7b013cbec16bbb436f312819a49a4a57752b2270c1a9332ae1a10fcc82a68
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Scan both platforms of the exact OCI candidate
+        shell: bash
+        run: |
+          scanner='docker.io/aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c'
+          archive="/tmp/vault-mcp-bridge-${{ matrix.service }}.oci.tar"
+          for platform in linux/amd64 linux/arm64; do
+            docker run --rm -v /tmp:/scan:ro "$scanner" image \
+              --input "/scan/$(basename "$archive")" \
+              --platform "$platform" \
+              --scanners vuln \
+              --format table \
+              --severity CRITICAL,HIGH \
+              --ignore-unfixed \
+              --exit-code 1
+          done
+      - name: Record the scanned candidate identity
+        shell: bash
+        run: |
+          digest='${{ steps.candidate.outputs.digest }}'
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          archive="/tmp/vault-mcp-bridge-${{ matrix.service }}.oci.tar"
+          printf '%s\n' "$digest" > "/tmp/vault-mcp-bridge-${{ matrix.service }}.digest"
+          sha256sum "$archive" | cut -d ' ' -f 1 > "/tmp/vault-mcp-bridge-${{ matrix.service }}.oci.tar.sha256"
+      - name: Upload scanned OCI candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vault-bridge-${{ matrix.service }}-oci-${{ github.sha }}
+          path: |
+            /tmp/vault-mcp-bridge-${{ matrix.service }}.oci.tar
+            /tmp/vault-mcp-bridge-${{ matrix.service }}.oci.tar.sha256
+            /tmp/vault-mcp-bridge-${{ matrix.service }}.digest
+          if-no-files-found: error
+
+  container-publish:
+    name: publish both scanned container candidates
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true && startsWith(github.ref, 'refs/tags/v')
+    needs: [preflight, container]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download both scanned OCI candidates
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: vault-bridge-*-oci-${{ github.sha }}
+          path: /tmp/vault-bridge-candidates
+          merge-multiple: true
+      - name: Verify candidate artifacts before registry authority is used
+        shell: bash
+        run: |
+          cd /tmp/vault-bridge-candidates
+          for service in server edge; do
+            expected_archive_hash="$(cat "vault-mcp-bridge-${service}.oci.tar.sha256")"
+            actual_archive_hash="$(sha256sum "vault-mcp-bridge-${service}.oci.tar" | cut -d ' ' -f 1)"
+            test "$actual_archive_hash" = "$expected_archive_hash"
+            digest="$(cat "vault-mcp-bridge-${service}.digest")"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          done
+      - name: Log in to GHCR after both scan gates pass
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish both exact scanned OCI archives and verify their digests
+        shell: bash
+        run: |
+          publisher='quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615'
+          repository="${GITHUB_REPOSITORY,,}"
+          mkdir -p release-output
+          for service in server edge; do
+            archive="/candidates/vault-mcp-bridge-${service}.oci.tar"
+            expected="$(cat "/tmp/vault-bridge-candidates/vault-mcp-bridge-${service}.digest")"
+            destination="ghcr.io/${repository}/vault-mcp-bridge-${service}:${GITHUB_REF_NAME}"
+            archive_digest="$(docker run --rm \
+              -v /tmp/vault-bridge-candidates:/candidates:ro \
+              "$publisher" inspect --raw "oci-archive:${archive}" | sha256sum | cut -d ' ' -f 1)"
+            test "sha256:${archive_digest}" = "$expected"
+            docker run --rm \
+              -v /tmp/vault-bridge-candidates:/candidates:ro \
+              -v "$HOME/.docker:/auth:ro" \
+              "$publisher" copy --all --preserve-digests \
+              --authfile /auth/config.json \
+              "oci-archive:${archive}" \
+              "docker://${destination}"
+            published_digest="$(docker run --rm \
+              -v "$HOME/.docker:/auth:ro" \
+              "$publisher" inspect --authfile /auth/config.json --raw \
+              "docker://${destination}" | sha256sum | cut -d ' ' -f 1)"
+            test "sha256:${published_digest}" = "$expected"
+            printf '%s\n' "$expected" > "release-output/${service}-container-digest.txt"
+          done
+      - name: Upload published image records
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vault-bridge-container-digests-${{ github.sha }}
+          path: release-output/*-container-digest.txt
+          if-no-files-found: error

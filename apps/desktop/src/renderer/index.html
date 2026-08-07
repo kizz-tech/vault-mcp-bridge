@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vault Bridge</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell" aria-live="polite">
+      <header class="topbar">
+        <h1>Vault Bridge</h1>
+        <nav>
+          <button id="journal-button" class="quiet" type="button">Journal</button>
+          <button id="menu-button" class="icon quiet" type="button" aria-label="Settings">···</button>
+        </nav>
+      </header>
+
+      <section id="onboarding" class="panel" aria-labelledby="onboarding-title">
+        <h2 id="onboarding-title">Connect vault</h2>
+        <div class="rows">
+          <div class="row">
+            <span class="label">Vault</span>
+            <span id="vault-value" class="value">Not selected</span>
+            <button id="vault-action" class="secondary" type="button">Choose</button>
+          </div>
+          <div class="row">
+            <span class="label">Server</span>
+            <span id="server-value" class="value">Not configured</span>
+            <button id="server-action" class="secondary" type="button">Add</button>
+          </div>
+        </div>
+        <p id="onboarding-error" class="error" hidden></p>
+        <button id="setup-action" class="primary" type="button" disabled>Set up</button>
+      </section>
+
+      <section id="ready" class="panel ready-panel" hidden aria-labelledby="ready-title">
+        <div class="ready-heading">
+          <h2 id="ready-title">Vault Bridge</h2>
+          <span id="status-pill" class="status">Ready</span>
+        </div>
+        <p id="ready-summary" class="summary"></p>
+        <div class="rows">
+          <div class="row">
+            <span class="label">Server</span>
+            <span id="ready-server" class="value"></span>
+            <button id="ready-server-action" class="secondary" type="button">Manage</button>
+          </div>
+          <div class="row">
+            <span class="label">ChatGPT</span>
+            <span id="ready-chatgpt" class="value">Not configured</span>
+            <button id="chatgpt-action" class="secondary" type="button">Copy URL &amp; Open</button>
+          </div>
+          <div class="row">
+            <span class="label">Sync</span>
+            <span id="ready-sync" class="value">Automatic</span>
+            <button id="pause-action" class="secondary" type="button">Pause</button>
+          </div>
+        </div>
+        <p id="ready-error" class="error" hidden></p>
+        <button id="sync-action" class="primary" type="button">Synchronize</button>
+      </section>
+
+      <aside id="attention" class="attention" hidden>
+        <span id="attention-message"></span>
+        <button id="attention-action" class="secondary" type="button">Retry</button>
+      </aside>
+    </main>
+
+    <dialog id="server-dialog">
+      <form id="server-form" method="dialog" class="sheet">
+        <h2>Server</h2>
+        <label>Address <input id="server-host" name="host" autocomplete="url" required /></label>
+        <label>User <input id="server-user" name="user" autocomplete="username" required /></label>
+        <label>SSH port <input id="server-port" name="port" type="number" min="1" max="65535" value="22" required /></label>
+        <div class="sheet-actions">
+          <button id="server-cancel" class="secondary" type="button">Cancel</button>
+          <button class="primary" type="submit">Connect</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="journal-dialog" class="journal-dialog">
+      <section class="sheet">
+        <div class="sheet-heading"><h2>Journal</h2><button id="journal-close" class="icon quiet" type="button" aria-label="Close">×</button></div>
+        <ol id="journal-list" class="journal-list"></ol>
+      </section>
+    </dialog>
+
+    <dialog id="settings-dialog">
+      <form method="dialog" class="sheet">
+        <div class="sheet-heading"><h2>Settings</h2><button class="icon quiet" value="cancel" aria-label="Close">×</button></div>
+        <label class="toggle"><input id="login-toggle" type="checkbox" checked /> Start at login</label>
+        <div class="settings-actions">
+          <button id="disconnect-action" class="secondary" type="button">Disconnect</button>
+          <button id="remove-server-copy-action" class="danger" type="button">Remove server copy</button>
+        </div>
+        <p id="settings-error" class="error" hidden></p>
+        <button id="settings-close" class="secondary" type="submit">Done</button>
+      </form>
+    </dialog>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

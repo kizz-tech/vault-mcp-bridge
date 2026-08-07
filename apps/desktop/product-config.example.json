@@ -1,0 +1,18 @@
+{
+  "edgeOrigin": "https://edge.example.invalid",
+  "ownerIssuer": "https://identity.example.invalid/",
+  "ownerAuthorizationEndpoint": "https://identity.example.invalid/oauth/authorize",
+  "ownerTokenEndpoint": "https://identity.example.invalid/oauth/token",
+  "ownerJwksUri": "https://identity.example.invalid/.well-known/jwks.json",
+  "ownerAudience": "vault-bridge-edge",
+  "ownerClientId": "vault-bridge-desktop",
+  "ownerScope": "openid profile",
+  "images": {
+    "serverRepository": "ghcr.io/example/vault-bridge-server",
+    "serverDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tunnelRepository": "cloudflare/cloudflared",
+    "tunnelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "runtimeMode": "rootless",
+  "syncIntervalMinutes": 5
+}

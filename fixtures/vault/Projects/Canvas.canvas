@@ -1,0 +1,7 @@
+{
+  "nodes": [
+    {"id": "demo-node", "type": "text", "text": "Синтетический Canvas"},
+    {"id": "demo-note", "type": "text", "text": "Никаких реальных данных"}
+  ],
+  "edges": []
+}

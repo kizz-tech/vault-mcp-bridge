@@ -1,0 +1,30 @@
+# Placeholder Cloudflare Tunnel ingress. Replace every hostname and service
+# URL locally. A YAML file alone does not create a named tunnel, WAF rule,
+# Access policy, OAuth provider, mTLS policy, or origin certificate.
+tunnel: REPLACE_WITH_NAMED_TUNNEL_ID
+credentials-file: /etc/cloudflared/REPLACE_WITH_CREDENTIALS_JSON
+
+ingress:
+  # Public MCP: protect with OAuth/JWT validation in the app and WAF/rate
+  # limits at Cloudflare. Do not send publisher credentials here.
+  - hostname: mcp.example.invalid
+    service: http://127.0.0.1:8787
+    originRequest:
+      noTLSVerify: false
+
+  # Publisher ingest: use a separate hostname/policy and enforce mTLS/service
+  # identity at the edge or a dedicated origin proxy before the app route.
+  - hostname: ingest.example.invalid
+    service: http://127.0.0.1:8787
+    originRequest:
+      noTLSVerify: false
+
+  # Owner admin: put Access + MFA in front of this route. The application must
+  # still perform CSRF/origin checks and owner authorization.
+  - hostname: admin.example.invalid
+    service: http://127.0.0.1:8787
+    originRequest:
+      noTLSVerify: false
+
+  # Never silently route unknown hostnames.
+  - service: http_status:404

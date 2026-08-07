@@ -1,0 +1,63 @@
+# The multi-platform index digest is intentionally pinned. Renovation should
+# update the tag and digest together after CI rebuilds and scans the image.
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
+FROM ${NODE_IMAGE} AS build
+
+ENV COREPACK_HOME=/tmp/corepack
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+WORKDIR /workspace
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY apps/edge/package.json apps/edge/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+RUN pnpm install --frozen-lockfile
+
+COPY apps/edge apps/edge
+COPY packages/contracts packages/contracts
+COPY tsconfig.base.json eslint.config.mjs vitest.config.ts ./
+RUN pnpm --filter @vault-mcp-bridge/edge... build
+# pnpm 10 requires the legacy deploy mode for non-injected workspace packages.
+# Keep the compatibility switch explicit until the workspace can drop it.
+RUN pnpm --filter @vault-mcp-bridge/edge deploy --prod --legacy /out
+
+ARG NODE_IMAGE
+FROM ${NODE_IMAGE} AS runtime
+
+ARG BUILD_DATE=""
+ARG SOURCE=""
+ARG VCS_REF=""
+ARG VERSION="0.1.0"
+LABEL org.opencontainers.image.title="Vault Bridge edge" \
+      org.opencontainers.image.description="Vault Bridge OAuth and tunnel control-plane edge" \
+      org.opencontainers.image.source=$SOURCE \
+      org.opencontainers.image.created=$BUILD_DATE \
+      org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+ENV NODE_ENV=production \
+    EDGE_BIND_HOST=0.0.0.0 \
+    EDGE_BIND_PORT=8790 \
+    EDGE_PROVIDER=cloudflare \
+    EDGE_STATE_FILE=/var/lib/vault-mcp-bridge-edge/state.json \
+    EDGE_CREDENTIAL_VAULT_FILE=/var/lib/vault-mcp-bridge-edge/credentials.json
+
+RUN groupadd --system --gid 10001 bridge \
+  && useradd --system --uid 10001 --gid bridge --home-dir /nonexistent --shell /usr/sbin/nologin bridge \
+  && mkdir -p /var/lib/vault-mcp-bridge-edge \
+  && chown 10001:10001 /var/lib/vault-mcp-bridge-edge \
+  && chmod 0700 /var/lib/vault-mcp-bridge-edge
+WORKDIR /app
+COPY --from=build --chown=bridge:bridge /out/ ./
+
+# State and encrypted credentials are optional persistent storage. Master-key
+# and Cloudflare-token files must be mounted as 0400/0600 deployment secrets;
+# no secret is copied into this image.
+VOLUME ["/var/lib/vault-mcp-bridge-edge"]
+
+# Metadata only: production deployment decides whether and where to publish it.
+EXPOSE 8790
+USER bridge
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD node --input-type=module -e "const r=await fetch('http://127.0.0.1:8790/readyz'); if(!r.ok) process.exit(1)"
+ENTRYPOINT ["node", "dist/index.js"]

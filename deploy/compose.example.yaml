@@ -1,0 +1,45 @@
+name: vault-mcp-bridge
+
+# Example local-origin deployment. It intentionally does not configure
+# OAuth/JWT, mTLS, Cloudflare Tunnel, or credentials. Put production secrets in
+# a secret manager and make the app fail closed when auth is absent.
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    image: vault-mcp-bridge-server:dev
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      NODE_ENV: production
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "8787"
+      SERVER_DATABASE_PATH: /var/lib/vault-mcp-bridge/vault.sqlite
+      # Required in production; placeholders intentionally absent here:
+      # JWT_ISSUER, JWT_AUDIENCE, JWT_JWKS_URL, MCP_VAULT_ID,
+      # ALLOWED_HOSTS, MCP_HOSTS, PUBLISHER_HOSTS, MCP_RESOURCE_URL,
+      # PUBLISHER_PUBLIC_URL, publisher mTLS policy, and secret references.
+    volumes:
+      - bridge-data:/var/lib/vault-mcp-bridge
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "-e", "fetch('http://127.0.0.1:8787/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  bridge-data:
+    name: vault-mcp-bridge-data-example

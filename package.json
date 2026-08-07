@@ -1,0 +1,55 @@
+{
+  "name": "vault-mcp-bridge",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm validate",
+    "dev": "pnpm --filter @vault-mcp-bridge/desktop dev",
+    "dev:desktop": "pnpm --filter @vault-mcp-bridge/desktop dev",
+    "dev:edge": "pnpm --filter @vault-mcp-bridge/edge dev",
+    "dev:legacy:agent": "pnpm --filter @vault-mcp-bridge/agent dev",
+    "dev:legacy:server": "pnpm --filter @vault-mcp-bridge/server dev",
+    "docker:build": "pnpm docker:build:server && pnpm docker:build:edge",
+    "docker:build:server": "docker build -f deploy/Dockerfile.server -t vault-mcp-bridge-server:local .",
+    "docker:build:edge": "docker build -f deploy/Dockerfile.edge -t vault-mcp-bridge-edge:local .",
+    "lint": "eslint . --max-warnings=0",
+    "package:desktop": "pnpm --filter @vault-mcp-bridge/desktop package",
+    "package:desktop:dir": "pnpm --filter @vault-mcp-bridge/desktop package:dir",
+    "test": "vitest run",
+    "test:desktop": "pnpm --filter @vault-mcp-bridge/desktop test",
+    "test:watch": "vitest",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "validate": "pnpm validate:compose && pnpm validate:release",
+    "validate:compose": "node scripts/validate-compose.mjs deploy/runtime/compose.contract.yaml --strict",
+    "validate:release": "node scripts/validate-release.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "@hono/node-server": "2.0.12"
+    },
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ],
+    "ignoredBuiltDependencies": [
+      "fs-xattr",
+      "macos-alias"
+    ]
+  }
+}
