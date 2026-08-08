@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Vault Bridge</title>
+  <desc id="description">A bridge arch and keyhole on a deep green rounded square.</desc>
+  <rect width="1024" height="1024" rx="224" fill="#315c46"/>
+  <path d="M184 682h656" fill="none" stroke="#fff" stroke-width="68" stroke-linecap="round"/>
+  <path d="M238 682c25-218 136-344 274-344s249 126 274 344" fill="none" stroke="#fff" stroke-width="68" stroke-linecap="round"/>
+  <path d="M256 682v106M768 682v106" fill="none" stroke="#fff" stroke-width="68" stroke-linecap="round"/>
+  <circle cx="512" cy="536" r="48" fill="#fff"/>
+  <path d="M512 578v104" fill="none" stroke="#fff" stroke-width="54" stroke-linecap="round"/>
+</svg>

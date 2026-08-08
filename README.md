@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="apps/desktop/assets/vault-bridge-mark.svg" alt="Vault Bridge" width="104" />
+
 # Vault Bridge
 
 **Give ChatGPT read-only access to a private Obsidian vault — without exposing

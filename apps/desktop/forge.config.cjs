@@ -36,6 +36,7 @@ module.exports = {
     appBundleId: "app.vaultbridge.desktop",
     name: "Vault Bridge",
     executableName: "Vault Bridge",
+    icon: path.resolve(__dirname, "assets", "VaultBridge.icns"),
     extendInfo: {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: false
