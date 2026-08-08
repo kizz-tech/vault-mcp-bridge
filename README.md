@@ -13,6 +13,18 @@ replaceable snapshot and exposes exactly two MCP tools:
 There is no write, delete, shell, arbitrary-path, or server-to-Mac command
 surface in v1.
 
+## Install with Codex
+
+No terminal knowledge is required. Copy one prompt into Codex and let it
+install, configure, and verify the self-hosted bridge while keeping account
+consent, credentials, and SSH identity approval under your control:
+
+**[Copy the Codex installation prompt](docs/install-with-codex.md)**
+
+The agent uses Vault Bridge's bounded `doctor`, `status`, `prepare`, `setup`,
+and `journal` commands. The runtime key is accepted only through stdin and
+encrypted storage; it is never part of setup JSON or process arguments.
+
 ## How it works
 
 ```text
@@ -77,14 +89,17 @@ OpenAI     Not configured        Add
 ```
 
 Setup progress stays on the same screen: checking server, starting container,
-securing connection, synchronizing vault, ready. Journal and settings remain
-secondary surfaces.
+securing connection, synchronizing vault, ready. Activity is a full navigation
+view; destructive lifecycle controls remain in Settings.
 
 The desktop app supports:
 
-- automatic sync every five minutes by default;
+- an immediate check at app launch, then automatic sync every five minutes by
+  default while Vault Bridge is running;
 - manual **Synchronize**;
 - pause/resume;
+- a persistent full-screen Activity view with aggregate added, modified,
+  removed, and unchanged counts;
 - start at login;
 - disconnect while retaining the replica;
 - explicit removal of the exact server copy.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { HostKeyChangedError, MemoryHostKeyPinStore, OpenSshAdapter, fingerprintFromKeyscanLine, normalizeFingerprint, type CommandResult, type CommandRunner, type KnownHostsWriter, type SshTarget } from "../src/ssh.js";
+import { HostKeyChangedError, MemoryHostKeyPinStore, OpenSshAdapter, fingerprintFromKeyscanLine, normalizeFingerprint, openSshHostKeyAlgorithms, type CommandResult, type CommandRunner, type KnownHostsWriter, type SshTarget } from "../src/ssh.js";
 
 class FakeRunner implements CommandRunner {
   calls: Array<{ command: string; args: readonly string[] }> = [];
@@ -54,6 +54,7 @@ describe("OpenSSH adapter", () => {
   it("computes an OpenSSH SHA-256 fingerprint from keyscan output", () => {
     const line = "host.example.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB7";
     expect(fingerprintFromKeyscanLine(line)).toMatch(/^SHA256\/[A-Za-z0-9+/]+$/u);
+    expect(openSshHostKeyAlgorithms("ssh-rsa")).toBe("rsa-sha2-512,rsa-sha2-256");
   });
 
   it("requires explicit confirmation before persisting a first-seen host key", async () => {
@@ -71,6 +72,7 @@ describe("OpenSSH adapter", () => {
     const second = new OpenSshAdapter(secondRunner, "/tmp/vault-bridge-known_hosts", writer);
     const target = await second.ensurePinned({ host: "host.example.invalid", user: "deploy", port: 22 }, pins, async (candidate) => candidate === actual);
     expect(target.hostKeyFingerprint).toBe(actual);
+    expect(target.hostKeyAlgorithm).toBe("ssh-ed25519");
     expect(await pins.get(target)).toBe(actual);
     expect(writer.lines).toContain("host.example.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB7");
     expect(fingerprint).not.toBe(actual);

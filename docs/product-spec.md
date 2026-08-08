@@ -5,14 +5,15 @@ Target: macOS-first, read-only Obsidian access from ChatGPT
 
 ## Product decision
 
-Vault Bridge is one installed application, not a collection of commands. The
-normal user never runs an agent, server, pairing CLI, Docker Compose, tunnel
-client, scanner, or sync worker directly.
+Vault Bridge is one installed application. The normal user never runs an agent,
+server, pairing CLI, Docker Compose, tunnel client, scanner, or sync worker
+directly. A bounded machine interface exists for Codex-driven installation; it
+uses the same application backend and is not a second product runtime.
 
 The first-use flow is one screen:
 
 ```text
-Vault Bridge                                      Journal   ···
+Vault Bridge                              Overview Activity   ···
 
 Connect vault
 
@@ -69,19 +70,19 @@ Ready
 ```
 
 Failures show one line and one next action. Raw stderr, paths, secrets, stack
-traces, and note contents never appear in the main UI or journal.
+traces, and note contents never appear in the main UI or Activity view.
 
 ## Ready state
 
 ```text
-Vault Bridge                                      Journal   ···
+Vault Bridge                              Overview Activity   ···
 
 My Vault                                                 Ready
 1,248 notes · 32 MB · published 14:32
 
 Server          deploy@vps.example.com                  Manage
 ChatGPT         Connected                         Open ChatGPT
-Sync            Automatic                               Pause
+Sync            Every 5 minutes                         Pause
 
 Synchronize
 ```
@@ -89,6 +90,28 @@ Synchronize
 Top-level states are **Ready**, **Synchronizing**, and **Needs attention**.
 Ready means the last local scan/publication and remote runtime succeeded. It
 does not claim that iCloud has already delivered a newer phone-side edit.
+
+Automatic sync means one check when the app starts, another after Resume, and a
+check every configured interval while the app is running. The overview shows
+last check, last actual publication, and next scheduled check separately.
+Activity is a full application view, not a modal. Sync entries show safe
+aggregate added/modified/removed/unchanged counts, generation, current bytes,
+duration, and trigger. They never expose note titles, paths, content, or raw
+queries.
+
+## Agent-first setup
+
+The copyable prompt delegates to one versioned runbook. Codex installs the app
+and its `vault-bridge` command, then uses a two-phase configuration:
+
+1. `prepare` reads a strict non-secret plan and the runtime key from stdin,
+   validates the vault/tunnel, and returns a candidate SSH fingerprint;
+2. after exact owner approval, `setup` pins that fingerprint and performs the
+   existing bounded deployment.
+
+`doctor`, `status`, and `journal` return predictable redacted JSON. There is no
+agent command for arbitrary shell, server commands, file reads, deletion, or
+vault writes.
 
 ## V1 scope
 

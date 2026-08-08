@@ -62,6 +62,25 @@ export interface McpConnection {
   resourceUrl: string;
 }
 
+export interface SyncChanges {
+  added: number;
+  modified: number;
+  removed: number;
+  unchanged: number;
+  total: number;
+  bytes: number;
+}
+
+export type SyncTrigger = "startup" | "scheduled" | "manual" | "resume" | "setup";
+
+export interface SyncSummary {
+  intervalMinutes: number;
+  lastCheckedAt: string | null;
+  nextCheckAt: string | null;
+  lastResult: "published" | "unchanged" | "failed" | null;
+  lastChanges: SyncChanges | null;
+}
+
 export interface DesktopState {
   mode: DesktopMode;
   phase: SetupPhase;
@@ -72,6 +91,7 @@ export interface DesktopState {
   mcp: McpConnection | null;
   paused: boolean;
   lastPublishedAt: string | null;
+  sync: SyncSummary;
   attention: AttentionState | null;
   /** Explicit lifecycle state; renderer actions must not infer it from phase. */
   serverCopy: "none" | "active" | "retained" | "unknown";
@@ -81,6 +101,12 @@ export interface JournalEntry {
   at: string;
   message: string;
   level: "info" | "warn" | "error";
+  category?: "sync" | "setup" | "connection" | "security" | "system";
+  result?: "published" | "unchanged" | "failed";
+  trigger?: SyncTrigger;
+  changes?: SyncChanges;
+  generation?: number;
+  durationMs?: number;
 }
 
 export interface DesktopBackend {
@@ -134,6 +160,13 @@ export const EMPTY_STATE: DesktopState = Object.freeze({
   mcp: null,
   paused: false,
   lastPublishedAt: null,
+  sync: {
+    intervalMinutes: 5,
+    lastCheckedAt: null,
+    nextCheckAt: null,
+    lastResult: null,
+    lastChanges: null
+  },
   attention: null,
   serverCopy: "none"
 });
@@ -145,6 +178,10 @@ export function cloneState(state: DesktopState): DesktopState {
     server: state.server ? { ...state.server } : null,
     tunnel: state.tunnel ? { ...state.tunnel } : null,
     mcp: state.mcp ? { ...state.mcp } : null,
+    sync: {
+      ...state.sync,
+      lastChanges: state.sync.lastChanges ? { ...state.sync.lastChanges } : null
+    },
     attention: state.attention ? { ...state.attention } : null
   };
 }

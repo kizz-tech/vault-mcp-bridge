@@ -52,6 +52,13 @@ Do not place any of those values in source, `.env`, manifests, or logs.
 The absence of those credentials is an intentional fail-closed result, not a
 reason to call an unsigned package signed or notarized.
 
+Every packaged app must contain
+`Contents/Resources/agent/install-agent-command.mjs`. After installing a test
+artifact, run its installer, then execute `vault-bridge doctor --json` and
+`vault-bridge status --json` from outside the checkout. The command must emit
+one JSON object, must not expose paths/hostnames/credentials, and must retain
+the `read-only-v1` help contract.
+
 The default desktop loads non-secret Secure Tunnel configuration from
 `VAULT_BRIDGE_SECURE_TUNNEL_IMAGE`, then `secure-tunnel-config.json` in
 Electron `userData`, then the packaged resources directory. Production image

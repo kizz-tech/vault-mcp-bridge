@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kizz-tech/vault-mcp-bridge/blob/main/docs/agent-setup-plan.schema.json",
+  "title": "Vault Bridge agent setup plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "vaultRoot", "server", "openai"],
+  "properties": {
+    "version": { "const": 1 },
+    "vaultRoot": { "type": "string", "minLength": 1 },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "user", "port"],
+      "properties": {
+        "host": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "user": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "openai": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tunnelId"],
+      "properties": {
+        "tunnelId": { "type": "string", "pattern": "^tunnel_[a-f0-9]{32}$" }
+      }
+    }
+  }
+}

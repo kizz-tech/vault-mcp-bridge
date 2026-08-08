@@ -17,6 +17,7 @@ const secureTunnelConfigPath = process.env.VAULT_BRIDGE_SECURE_TUNNEL_CONFIG_PAT
 if (secureTunnelConfigPath && path.basename(secureTunnelConfigPath) !== "secure-tunnel-config.json") {
   throw new Error("VAULT_BRIDGE_SECURE_TUNNEL_CONFIG_PATH must end in secure-tunnel-config.json");
 }
+const agentResourcesPath = path.resolve(__dirname, "agent");
 
 module.exports = {
   packagerConfig: {
@@ -40,9 +41,10 @@ module.exports = {
         NSAllowsArbitraryLoads: false
       }
     },
-    ...((productConfigPath || secureTunnelConfigPath)
-      ? { extraResource: [productConfigPath, secureTunnelConfigPath].filter(Boolean) }
-      : {}),
+    extraResource: [
+      agentResourcesPath,
+      ...[productConfigPath, secureTunnelConfigPath].filter(Boolean)
+    ],
     osxSign: process.env.VAULT_BRIDGE_OSX_SIGN_IDENTITY
       ? { identity: process.env.VAULT_BRIDGE_OSX_SIGN_IDENTITY }
       : undefined,

@@ -1,8 +1,9 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, safeStorage, shell } from "electron";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { AGENT_HELP, agentJournal, agentStatus, parseAgentCommand, readAgentSetupPlan, readRuntimeKeyFromStdin } from "./agent-command.js";
 import { NativeOAuthClient, SafeStorageOwnerTokenProvider } from "./oauth-client.js";
 import { PrivateDesktopBackend } from "./private-backend.js";
 import { ProductDesktopBackend } from "./product-backend.js";
@@ -11,7 +12,7 @@ import { MacPublisherIdentityProvider } from "./publisher-identity.js";
 import { SafeStorageSecretStore } from "./secret-store.js";
 import { loadSecureTunnelProductConfig } from "./secure-tunnel-config.js";
 import { assertTrustedSender, isAllowedExternalUrl, isAllowedMcpResourceUrl, isIpcChannel, isWithinDirectory, safeIpcError } from "./security.js";
-import { OpenSshAdapter } from "./ssh.js";
+import { OpenSshAdapter, normalizeFingerprint, type SshTarget } from "./ssh.js";
 import type { DesktopBackend, ServerInput, TunnelInput } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -36,6 +37,74 @@ export interface DesktopRuntime {
 export interface DesktopRuntimeOptions {
   backend?: DesktopBackend;
   userDataPath?: string;
+}
+
+type BackendBundle = {
+  backend: DesktopBackend;
+  kind: "private" | "advanced";
+  privateBackend?: PrivateDesktopBackend;
+  ssh?: OpenSshAdapter;
+};
+
+async function createDefaultBackend(options: {
+  confirmation?: { confirm(fingerprint: string, target: SshTarget): Promise<boolean> };
+} = {}): Promise<BackendBundle> {
+  const appDataPath = app.getPath("userData");
+  const secretStore = new SafeStorageSecretStore(join(appDataPath, "secrets.json"), safeStorage);
+  const productConfig = await loadProductConfig({
+    filePaths: [join(appDataPath, "product-config.json"), join(process.resourcesPath, "product-config.json")],
+    allowLoopback: !app.isPackaged && process.env.NODE_ENV !== "production"
+  });
+  const browser = { openExternal: (url: string) => shell.openExternal(url) };
+  const confirmation = options.confirmation ?? {
+    async confirm(fingerprint: string, target: SshTarget) {
+      const result = await dialog.showMessageBox({
+        type: "question",
+        buttons: ["Cancel", "Trust"],
+        defaultId: 0,
+        cancelId: 0,
+        title: "Verify server",
+        message: `${target.user}@${target.host}`,
+        detail: fingerprint
+      });
+      return result.response === 1;
+    }
+  };
+  const ssh = new OpenSshAdapter(undefined, join(appDataPath, "ssh", "known_hosts"));
+  if (productConfig) {
+    const oauth = new NativeOAuthClient(productConfig, secretStore, browser);
+    return {
+      kind: "advanced",
+      backend: new ProductDesktopBackend({
+        appDataPath,
+        config: productConfig,
+        secretStore,
+        ownerTokens: oauth ?? new SafeStorageOwnerTokenProvider(secretStore),
+        browser,
+        publisherIdentity: new MacPublisherIdentityProvider(secretStore),
+        oauth,
+        ssh,
+        confirmation
+      })
+    };
+  }
+  const secureConfig = await loadSecureTunnelProductConfig({
+    filePaths: [join(appDataPath, "secure-tunnel-config.json"), join(process.resourcesPath, "secure-tunnel-config.json")],
+    allowMutableImage: !app.isPackaged && process.env.NODE_ENV !== "production"
+  }) ?? (!app.isPackaged
+    ? { image: "vault-mcp-bridge-secure-tunnel:local", syncIntervalMinutes: 5 }
+    : undefined);
+  if (!secureConfig) throw new Error("Secure tunnel product configuration is missing");
+  const privateBackend = new PrivateDesktopBackend({
+    appDataPath,
+    config: secureConfig,
+    composeTemplatePath: join(__dirname, "assets", "secure-tunnel-compose.yaml"),
+    secretStore,
+    browser,
+    ssh,
+    confirmation
+  });
+  return { kind: "private", backend: privateBackend, privateBackend, ssh };
 }
 
 export function createDesktopRuntime(options: DesktopRuntimeOptions = {}): DesktopRuntime {
@@ -262,10 +331,10 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions = {}): Deskt
 
   const createWindow = (): BrowserWindow => {
     const window = new BrowserWindow({
-      width: 640,
-      height: 620,
-      minWidth: 520,
-      minHeight: 480,
+      width: 980,
+      height: 760,
+      minWidth: 720,
+      minHeight: 600,
       show: false,
       title: "Vault Bridge",
       webPreferences: {
@@ -295,63 +364,7 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions = {}): Deskt
       if (options.userDataPath) app.setPath("userData", options.userDataPath);
       await app.whenReady();
       if (!backend) {
-        const secretStore = new SafeStorageSecretStore(join(app.getPath("userData"), "secrets.json"), safeStorage);
-        const productConfig = await loadProductConfig({
-          filePaths: [
-            join(app.getPath("userData"), "product-config.json"),
-            join(process.resourcesPath, "product-config.json")
-          ],
-          allowLoopback: !app.isPackaged && process.env.NODE_ENV !== "production"
-        });
-        const browser = { openExternal: (url: string) => shell.openExternal(url) };
-        const confirmation = {
-          async confirm(fingerprint: string, target: { user: string; host: string }) {
-            const result = await dialog.showMessageBox({
-              type: "question",
-              buttons: ["Cancel", "Trust"],
-              defaultId: 0,
-              cancelId: 0,
-              title: "Verify server",
-              message: `${target.user}@${target.host}`,
-              detail: fingerprint
-            });
-            return result.response === 1;
-          }
-        };
-        if (productConfig) {
-          const oauth = new NativeOAuthClient(productConfig, secretStore, browser);
-          backend = new ProductDesktopBackend({
-            appDataPath: app.getPath("userData"),
-            config: productConfig,
-            secretStore,
-            ownerTokens: oauth ?? new SafeStorageOwnerTokenProvider(secretStore),
-            browser,
-            publisherIdentity: new MacPublisherIdentityProvider(secretStore),
-            oauth,
-            ssh: new OpenSshAdapter(undefined, join(app.getPath("userData"), "ssh", "known_hosts")),
-            confirmation
-          });
-        } else {
-          const secureConfig = await loadSecureTunnelProductConfig({
-            filePaths: [
-              join(app.getPath("userData"), "secure-tunnel-config.json"),
-              join(process.resourcesPath, "secure-tunnel-config.json")
-            ],
-            allowMutableImage: !app.isPackaged && process.env.NODE_ENV !== "production"
-          }) ?? (!app.isPackaged
-            ? { image: "vault-mcp-bridge-secure-tunnel:local", syncIntervalMinutes: 5 }
-            : undefined);
-          if (!secureConfig) throw new Error("Secure tunnel product configuration is missing");
-          backend = new PrivateDesktopBackend({
-            appDataPath: app.getPath("userData"),
-            config: secureConfig,
-            composeTemplatePath: join(__dirname, "assets", "secure-tunnel-compose.yaml"),
-            secretStore,
-            browser,
-            ssh: new OpenSshAdapter(undefined, join(app.getPath("userData"), "ssh", "known_hosts")),
-            confirmation
-          });
-        }
+        backend = (await createDefaultBackend()).backend;
       }
       registerProtocol();
       registerIpc();
@@ -416,9 +429,129 @@ function mimeType(path: string): string {
   }
 }
 
-if (process.env.VAULT_BRIDGE_NO_BOOT !== "1") {
-  const runtime = createDesktopRuntime();
-  void runtime.start();
+async function runAgentMode(arguments_: readonly string[]): Promise<number> {
+  const command = parseAgentCommand(arguments_);
+  if ((command.name === "prepare" || command.name === "setup") && !app.requestSingleInstanceLock()) {
+    throw new Error("agent_app_running");
+  }
+  await app.whenReady();
+  if (command.name === "help") {
+    writeAgentJson(AGENT_HELP);
+    return 0;
+  }
+  if (command.name === "doctor") {
+    const checks = {
+      platform: process.platform === "darwin",
+      encryptedStorageProvider: process.platform === "darwin" ? "macos-safe-storage" : null,
+      ssh: await access("/usr/bin/ssh").then(() => true, () => false),
+      packaged: app.isPackaged
+    };
+    const ok = checks.platform && Boolean(checks.encryptedStorageProvider) && checks.ssh;
+    writeAgentJson({ ok, appVersion: app.getVersion(), checks });
+    return ok ? 0 : 1;
+  }
+
+  let approvedFingerprint: string | undefined;
+  if (command.name === "setup") approvedFingerprint = normalizeFingerprint(command.approvedFingerprint);
+  const bundle = await createDefaultBackend({
+    confirmation: {
+      confirm: async (fingerprint) => approvedFingerprint !== undefined && normalizeFingerprint(fingerprint) === approvedFingerprint
+    }
+  });
+  if (bundle.kind !== "private" || !bundle.privateBackend || !bundle.ssh) throw new Error("agent_mode_requires_private_tunnel");
+  const backend = bundle.privateBackend;
+  try {
+    await backend.initialize({ backgroundSync: false, refreshVault: false });
+    if (command.name === "status") {
+      writeAgentJson(agentStatus(await backend.getState()));
+      return 0;
+    }
+    if (command.name === "journal") {
+      writeAgentJson(agentJournal(await backend.getJournal()));
+      return 0;
+    }
+    if (command.name === "prepare") {
+      const plan = await readAgentSetupPlan(command.configPath);
+      const runtimeKey = await readRuntimeKeyFromStdin(process.stdin);
+      await backend.selectVault(plan.vaultRoot);
+      await backend.configureServer(plan.server);
+      const resolvedTarget = await bundle.ssh.resolve(OpenSshAdapter.fromInput(plan.server));
+      const fingerprint = await bundle.ssh.readHostFingerprint(resolvedTarget);
+      if (!fingerprint) throw new Error("server_identity_unavailable");
+      await backend.configureTunnel({ tunnelId: plan.openai.tunnelId, apiKey: runtimeKey });
+      writeAgentJson({
+        ok: true,
+        prepared: true,
+        state: agentStatus(await backend.getState()),
+        approval: { kind: "ssh-host-fingerprint", fingerprint },
+        nextCommand: `vault-bridge setup --approve-host-fingerprint ${fingerprint} --json`
+      });
+      return 0;
+    }
+    const state = await backend.setup();
+    const status = agentStatus(state);
+    writeAgentJson(status);
+    return state.mode === "ready" ? 0 : 1;
+  } finally {
+    backend.close();
+  }
+}
+
+function writeAgentJson(value: unknown): void {
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+function safeAgentError(error: unknown): string {
+  const code = error instanceof Error ? error.message : "agent_command_failed";
+  const allowed = new Set([
+    "agent_command_invalid",
+    "agent_config_path_invalid",
+    "agent_config_invalid",
+    "agent_config_owner_invalid",
+    "agent_config_permissions_invalid",
+    "runtime_key_stdin_invalid",
+    "agent_mode_requires_private_tunnel",
+    "agent_app_running",
+    "server_identity_unavailable",
+    "Secure tunnel product configuration is missing"
+  ]);
+  if (allowed.has(code)) return code;
+  if (/tunnel|api key/iu.test(code)) return "openai_tunnel_credentials_invalid";
+  if (/vault|scan/iu.test(code)) return "vault_unavailable";
+  if (/ssh|server identity|fingerprint/iu.test(code)) return "ssh_preflight_failed";
+  if (/safeStorage|encryption|keychain/iu.test(code)) return "encrypted_storage_unavailable";
+  return "agent_command_failed";
+}
+
+const agentArgumentIndex = process.argv.findIndex((argument) => argument === "--agent" || argument === "agent");
+const agentArguments = process.env.VAULT_BRIDGE_AGENT_MODE === "1"
+  ? process.argv.slice(1)
+  : agentArgumentIndex >= 0
+    ? process.argv.slice(agentArgumentIndex + 1)
+    : undefined;
+if (agentArguments) {
+  void runAgentMode(agentArguments).then(
+    (code) => app.exit(code),
+    (error: unknown) => {
+      writeAgentJson({ ok: false, error: safeAgentError(error) });
+      app.exit(1);
+    }
+  );
+} else if (process.env.VAULT_BRIDGE_NO_BOOT !== "1") {
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+  } else {
+    const runtime = createDesktopRuntime();
+    app.on("second-instance", () => {
+      const window = runtime.getWindow();
+      if (window) {
+        if (window.isMinimized()) window.restore();
+        window.show();
+        window.focus();
+      }
+    });
+    void runtime.start();
+  }
 } else if (process.env.VAULT_BRIDGE_SMOKE_MAIN === "1") {
   void app.whenReady().then(
     () => app.quit(),

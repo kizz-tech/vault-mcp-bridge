@@ -16,8 +16,7 @@ const config = (root: string) => ({
   projectName: "vmb-synthetic",
 });
 
-const scan = (): ScanResult => {
-  const content = "# Synthetic note\n";
+const scan = (content = "# Synthetic note\n"): ScanResult => {
   return {
     files: [{ id: "document_private_test_0001", title: "Synthetic note", relativePath: "note.md", bytes: content.length, content, contentType: "markdown", sha256: sha256Base64Url(content), modifiedAt: "2026-01-01T00:00:00.000Z" }],
     excluded: [],
@@ -41,7 +40,9 @@ describe("private SSH snapshot publisher", () => {
       sshUser: "operator",
       sshPort: 2222,
       sshKnownHostsFile: "/tmp/synthetic-known-hosts",
-    })).toMatchObject({ sshUser: "operator", sshPort: 2222 });
+      sshHostKeyAlgorithm: "ssh-rsa",
+    })).toMatchObject({ sshUser: "operator", sshPort: 2222, sshHostKeyAlgorithm: "ssh-rsa" });
+    expect(() => validatePrivateSyncConfig({ ...value, sshHostKeyAlgorithm: "ssh-dss" })).toThrow(/SSH target/u);
   });
 
   it("persists a pending generation and skips an unchanged projection", async () => {
@@ -64,12 +65,30 @@ describe("private SSH snapshot publisher", () => {
         receivedAt: new Date().toISOString(),
       };
     };
-    const scanner = { scan: async () => scan() };
+    let current = scan();
+    const scanner = { scan: async () => current };
     const first = await runPrivateSync({ configPath, scanner, uploader });
-    expect(first).toMatchObject({ status: "uploaded", generation: 1, documentCount: 1 });
+    expect(first).toMatchObject({
+      status: "uploaded",
+      generation: 1,
+      documentCount: 1,
+      changes: { added: 1, modified: 0, removed: 0, unchanged: 0, total: 1 }
+    });
     const second = await runPrivateSync({ configPath, scanner, uploader });
-    expect(second).toMatchObject({ status: "unchanged", generation: 1, documentCount: 1 });
-    expect(uploads).toBe(1);
-    expect(JSON.parse(await readFile(join(directory, "sync-state.json"), "utf8"))).toMatchObject({ lastGeneration: 1 });
+    expect(second).toMatchObject({
+      status: "unchanged",
+      generation: 1,
+      documentCount: 1,
+      changes: { added: 0, modified: 0, removed: 0, unchanged: 1, total: 1 }
+    });
+    current = scan("# Synthetic note changed\n");
+    const third = await runPrivateSync({ configPath, scanner, uploader });
+    expect(third).toMatchObject({
+      status: "uploaded",
+      generation: 2,
+      changes: { added: 0, modified: 1, removed: 0, unchanged: 0, total: 1 }
+    });
+    expect(uploads).toBe(2);
+    expect(JSON.parse(await readFile(join(directory, "sync-state.json"), "utf8"))).toMatchObject({ lastGeneration: 2 });
   });
 });

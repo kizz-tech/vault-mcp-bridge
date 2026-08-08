@@ -12,6 +12,7 @@ import {
   OpenSftpAdapter,
   OpenSshAdapter,
   type HostKeyPinStore,
+  type SshHostKeyAlgorithm,
   type SshTarget
 } from "./ssh.js";
 import {
@@ -24,6 +25,8 @@ import {
   type JournalEntry,
   type ServerInput,
   type ServerSummary,
+  type SyncChanges,
+  type SyncTrigger,
   type TunnelInput,
   type TunnelSummary,
   type VaultSummary
@@ -49,11 +52,16 @@ type PrivateRecord = {
   remoteDirectory?: string;
   paused: boolean;
   lastPublishedAt?: string;
+  lastCheckedAt?: string;
+  lastSyncResult?: "published" | "unchanged" | "failed";
+  lastSyncChanges?: SyncChanges;
+  sshHostKeyAlgorithm?: SshHostKeyAlgorithm;
 };
 
 export interface PrivateInstallation {
   readonly projectName: string;
   readonly remoteDirectory: string;
+  readonly sshHostKeyAlgorithm?: SshHostKeyAlgorithm;
 }
 
 export interface PrivateDeploymentPort {
@@ -97,6 +105,7 @@ export class PrivateDesktopBackend implements DesktopBackend {
   private setupPromise: Promise<DesktopState> | undefined;
   private syncPromise: Promise<DesktopState> | undefined;
   private syncTimer: NodeJS.Timeout | undefined;
+  private nextSyncAt: Date | undefined;
 
   constructor(private readonly options: PrivateDesktopBackendOptions) {
     this.scanner = options.scanner ?? new DefaultVaultScanner();
@@ -112,9 +121,17 @@ export class PrivateDesktopBackend implements DesktopBackend {
     });
   }
 
-  async initialize(): Promise<DesktopState> {
+  async initialize(options: { backgroundSync?: boolean; refreshVault?: boolean } = {}): Promise<DesktopState> {
     this.record = await readRecord(this.recordPath());
-    if (this.record.vault) {
+    this.journal.splice(0, this.journal.length, ...(await readJournal(this.journalPath())));
+    if (options.refreshVault !== false && this.record.phase === "ready" && !this.record.sshHostKeyAlgorithm) {
+      const algorithm = await readKnownHostAlgorithm(join(this.options.appDataPath, "ssh", "known_hosts"));
+      if (algorithm) {
+        this.record = { ...this.record, sshHostKeyAlgorithm: algorithm };
+        await this.persist();
+      }
+    }
+    if (this.record.vault && options.refreshVault !== false) {
       const scan = await this.scanner.scan(this.record.vault.root, {});
       if (scan.errors.length === 0) {
         this.record = {
@@ -128,9 +145,9 @@ export class PrivateDesktopBackend implements DesktopBackend {
       }
     }
     await this.projectRecord();
-    if (this.record.phase === "ready") {
+    if (this.record.phase === "ready" && options.backgroundSync !== false) {
       this.scheduleSync();
-      void this.synchronize();
+      void this.synchronize("startup");
     }
     return cloneState(this.state);
   }
@@ -138,6 +155,7 @@ export class PrivateDesktopBackend implements DesktopBackend {
   close(): void {
     if (this.syncTimer) clearInterval(this.syncTimer);
     this.syncTimer = undefined;
+    this.nextSyncAt = undefined;
   }
 
   async getState(): Promise<DesktopState> { return cloneState(this.state); }
@@ -151,7 +169,7 @@ export class PrivateDesktopBackend implements DesktopBackend {
     const vaultId = this.record.vault?.id ?? opaqueId("vault");
     this.record = { ...this.record, vault: { root: canonicalRoot, id: vaultId, summary }, phase: "idle" };
     await this.persist();
-    this.append("Vault scanned");
+    await this.append("Vault scanned", "info", { category: "setup" });
     await this.projectRecord();
     return { ...summary };
   }
@@ -162,7 +180,7 @@ export class PrivateDesktopBackend implements DesktopBackend {
     const server = { host: target.host, user: target.user, port: target.port };
     this.record = { ...this.record, server, phase: "idle" };
     await this.persist();
-    this.append("Server saved");
+    await this.append("Server saved", "info", { category: "setup" });
     await this.projectRecord();
     return serverSummary(server);
   }
@@ -178,7 +196,7 @@ export class PrivateDesktopBackend implements DesktopBackend {
     await this.secrets.put(RUNTIME_KEY_SECRET, apiKey);
     this.record = { ...this.record, tunnelId, phase: "idle" };
     await this.persist();
-    this.append("OpenAI tunnel verified");
+    await this.append("OpenAI tunnel verified", "info", { category: "connection" });
     await this.projectRecord();
     return { configured: true };
   }
@@ -189,29 +207,30 @@ export class PrivateDesktopBackend implements DesktopBackend {
     return this.setupPromise;
   }
 
-  async synchronize(): Promise<DesktopState> {
+  async synchronize(trigger: SyncTrigger = "manual"): Promise<DesktopState> {
     if (this.syncPromise) return this.syncPromise;
     if (this.record.phase !== "ready" || this.record.paused) return cloneState(this.state);
-    this.syncPromise = this.runSync().finally(() => { this.syncPromise = undefined; });
+    this.syncPromise = this.runSync(trigger).finally(() => { this.syncPromise = undefined; });
     return this.syncPromise;
   }
 
   async setPaused(paused: boolean): Promise<DesktopState> {
     this.record = { ...this.record, paused };
     await this.persist();
-    this.append(paused ? "Sync paused" : "Sync resumed");
+    await this.append(paused ? "Sync paused" : "Sync resumed", "info", { category: "sync" });
     await this.projectRecord();
-    if (!paused) void this.synchronize();
+    this.scheduleSync();
+    if (!paused) void this.synchronize("resume");
     return cloneState(this.state);
   }
 
-  async getJournal(): Promise<JournalEntry[]> { return this.journal.map((entry) => ({ ...entry })); }
+  async getJournal(): Promise<JournalEntry[]> { return this.journal.map(cloneJournalEntry); }
   async setStartAtLogin(_enabled: boolean): Promise<void> {}
 
   async connectChatGpt(): Promise<DesktopState> {
     if (this.record.phase !== "ready") return this.fail("tunnel-not-configured", "Finish setup first", "retry");
     await this.options.browser?.openExternal("https://chatgpt.com/");
-    this.append("ChatGPT opened");
+    await this.append("ChatGPT opened", "info", { category: "connection" });
     return cloneState(this.state);
   }
 
@@ -222,7 +241,7 @@ export class PrivateDesktopBackend implements DesktopBackend {
       await this.deployment.disconnect({ ...installation, server: this.record.server });
       this.record = { ...this.record, phase: "retained", paused: true };
       await this.persist();
-      this.append("Remote access stopped");
+      await this.append("Remote access stopped", "warn", { category: "security" });
       await this.projectRecord();
       return cloneState(this.state);
     } catch {
@@ -244,7 +263,7 @@ export class PrivateDesktopBackend implements DesktopBackend {
         ...(this.record.tunnelId ? { tunnelId: this.record.tunnelId } : {})
       };
       await this.persist();
-      this.append("Server copy removed");
+      await this.append("Server copy removed", "warn", { category: "security" });
       await this.projectRecord();
       return cloneState(this.state);
     } catch {
@@ -258,6 +277,7 @@ export class PrivateDesktopBackend implements DesktopBackend {
   }
 
   private async runSetup(): Promise<DesktopState> {
+    const startedAt = Date.now();
     const vault = this.record.vault;
     if (!vault) return this.fail("vault-missing", "Vault not found", "choose-vault");
     if (!this.record.server) return this.fail("ssh-failed", "Server not configured", "change-server");
@@ -278,19 +298,31 @@ export class PrivateDesktopBackend implements DesktopBackend {
         installationId,
         projectName
       });
-      this.record = { ...this.record, installationId, deviceId, projectName: installed.projectName, remoteDirectory: installed.remoteDirectory };
+      this.record = {
+        ...this.record,
+        installationId,
+        deviceId,
+        projectName: installed.projectName,
+        remoteDirectory: installed.remoteDirectory,
+        ...(installed.sshHostKeyAlgorithm ? { sshHostKeyAlgorithm: installed.sshHostKeyAlgorithm } : {})
+      };
       await this.writeSyncConfig();
       this.state = { ...this.state, mode: "synchronizing", phase: "first-snapshot" };
       this.publish();
       const receipt = await this.syncOnce();
+      const checkedAt = this.now().toISOString();
+      const result = receipt.status === "uploaded" ? "published" : "unchanged";
       this.record = {
         ...this.record,
         phase: "ready",
         paused: false,
-        lastPublishedAt: this.now().toISOString()
+        ...(receipt.status === "uploaded" ? { lastPublishedAt: checkedAt } : {}),
+        lastCheckedAt: checkedAt,
+        lastSyncResult: result,
+        lastSyncChanges: receipt.changes
       };
       await this.persist();
-      this.append(receipt.status === "uploaded" ? "Vault synchronized" : "Vault unchanged");
+      await this.appendSync(receipt, "setup", Date.now() - startedAt);
       await this.projectRecord();
       this.scheduleSync();
       return cloneState(this.state);
@@ -299,18 +331,43 @@ export class PrivateDesktopBackend implements DesktopBackend {
     }
   }
 
-  private async runSync(): Promise<DesktopState> {
+  private async runSync(trigger: SyncTrigger): Promise<DesktopState> {
+    const startedAt = Date.now();
     this.state = { ...this.state, mode: "synchronizing", phase: "first-snapshot", attention: null };
     this.publish();
     try {
       const receipt = await this.syncOnce();
-      this.record = { ...this.record, lastPublishedAt: this.now().toISOString() };
+      const checkedAt = this.now().toISOString();
+      const result = receipt.status === "uploaded" ? "published" : "unchanged";
+      this.record = {
+        ...this.record,
+        ...(receipt.status === "uploaded" ? { lastPublishedAt: checkedAt } : {}),
+        lastCheckedAt: checkedAt,
+        lastSyncResult: result,
+        lastSyncChanges: receipt.changes
+      };
       await this.persist();
-      this.append(receipt.status === "uploaded" ? "Vault synchronized" : "Vault unchanged");
+      await this.appendSync(receipt, trigger, Date.now() - startedAt);
       await this.projectRecord();
       return cloneState(this.state);
     } catch {
-      return this.fail("sync-blocked", "Synchronization failed", "retry");
+      this.record = { ...this.record, lastCheckedAt: this.now().toISOString(), lastSyncResult: "failed" };
+      await this.persist();
+      this.state = {
+        ...this.state,
+        sync: {
+          ...this.state.sync,
+          lastCheckedAt: this.record.lastCheckedAt ?? null,
+          lastResult: "failed"
+        }
+      };
+      await this.append("Synchronization failed", "error", {
+        category: "sync",
+        result: "failed",
+        trigger,
+        durationMs: Date.now() - startedAt
+      });
+      return this.fail("sync-blocked", "Synchronization failed", "retry", false);
     }
   }
 
@@ -331,6 +388,7 @@ export class PrivateDesktopBackend implements DesktopBackend {
       sshUser: this.record.server.user,
       sshPort: this.record.server.port,
       sshKnownHostsFile: join(this.options.appDataPath, "ssh", "known_hosts"),
+      ...(this.record.sshHostKeyAlgorithm ? { sshHostKeyAlgorithm: this.record.sshHostKeyAlgorithm } : {}),
       remoteDirectory: installation.remoteDirectory,
       projectName: installation.projectName,
       include: ["**/*.md", "**/*.canvas", "**/*.base"],
@@ -340,7 +398,7 @@ export class PrivateDesktopBackend implements DesktopBackend {
   }
 
   private async projectRecord(): Promise<void> {
-    const hasKey = Boolean(this.record.tunnelId && await this.secrets.get(RUNTIME_KEY_SECRET));
+    const hasTunnelConfiguration = Boolean(this.record.tunnelId);
     const active = this.record.phase === "ready";
     const retained = this.record.phase === "retained";
     const server = this.record.server ? serverSummary(this.record.server, active) : null;
@@ -350,11 +408,18 @@ export class PrivateDesktopBackend implements DesktopBackend {
       phase: active ? "ready" : "idle",
       vault: this.record.vault ? { ...this.record.vault.summary } : null,
       server,
-      tunnel: hasKey ? { configured: true } : null,
+      tunnel: hasTunnelConfiguration ? { configured: true } : null,
       requiresTunnelConfig: true,
       mcp: active ? { host: "Connected", resourceUrl: `https://api.openai.com/v1/tunnels/${this.record.tunnelId ?? ""}` } : null,
       paused: this.record.paused,
       lastPublishedAt: this.record.lastPublishedAt ?? null,
+      sync: {
+        intervalMinutes: this.options.config.syncIntervalMinutes,
+        lastCheckedAt: this.record.lastCheckedAt ?? null,
+        nextCheckAt: this.record.paused ? null : this.nextSyncAt?.toISOString() ?? null,
+        lastResult: this.record.lastSyncResult ?? null,
+        lastChanges: this.record.lastSyncChanges ? { ...this.record.lastSyncChanges } : null
+      },
       attention: null,
       serverCopy: active ? "active" : retained ? "retained" : "none"
     };
@@ -374,11 +439,29 @@ export class PrivateDesktopBackend implements DesktopBackend {
   private async persist(): Promise<void> { await atomicWrite(this.recordPath(), this.record); }
   private recordPath(): string { return join(this.options.appDataPath, "private-setup.json"); }
   private syncConfigPath(): string { return join(this.options.appDataPath, "private-sync", "config.json"); }
+  private journalPath(): string { return join(this.options.appDataPath, "journal.json"); }
   private now(): Date { return this.options.now?.() ?? new Date(); }
 
   private scheduleSync(): void {
     if (this.syncTimer) clearInterval(this.syncTimer);
-    this.syncTimer = setInterval(() => { void this.synchronize(); }, this.options.config.syncIntervalMinutes * 60_000);
+    this.syncTimer = undefined;
+    this.nextSyncAt = undefined;
+    if (this.record.phase !== "ready" || this.record.paused) {
+      this.state = { ...this.state, sync: { ...this.state.sync, nextCheckAt: null } };
+      this.publish();
+      return;
+    }
+    const intervalMs = this.options.config.syncIntervalMinutes * 60_000;
+    this.nextSyncAt = new Date(this.now().getTime() + intervalMs);
+    this.state = { ...this.state, sync: { ...this.state.sync, nextCheckAt: this.nextSyncAt.toISOString() } };
+    this.publish();
+    this.syncTimer = setInterval(() => {
+      this.nextSyncAt = new Date(this.now().getTime() + intervalMs);
+      this.state = { ...this.state, sync: { ...this.state.sync, nextCheckAt: this.nextSyncAt.toISOString() } };
+      this.publish();
+      void this.synchronize("scheduled");
+    }, intervalMs);
+    this.syncTimer.unref();
   }
 
   private failFrom(error: unknown): Promise<DesktopState> {
@@ -391,16 +474,32 @@ export class PrivateDesktopBackend implements DesktopBackend {
     return this.fail("deployment-failed", "Container did not start", "retry");
   }
 
-  private async fail(code: AttentionState["code"], message: string, action: AttentionState["action"]): Promise<DesktopState> {
+  private async fail(code: AttentionState["code"], message: string, action: AttentionState["action"], recordEvent = true): Promise<DesktopState> {
     this.state = { ...this.state, mode: "attention", attention: { code, message, action } };
-    this.append(message, "error");
+    if (recordEvent) await this.append(message, "error", { category: "system" });
     this.publish();
     return cloneState(this.state);
   }
 
-  private append(message: string, level: JournalEntry["level"] = "info"): void {
-    this.journal.push({ at: this.now().toISOString(), message: message.slice(0, 160), level });
+  private async append(
+    message: string,
+    level: JournalEntry["level"] = "info",
+    details: Omit<Partial<JournalEntry>, "at" | "message" | "level"> = {}
+  ): Promise<void> {
+    this.journal.push({ at: this.now().toISOString(), message: message.slice(0, 160), level, ...details });
     if (this.journal.length > MAX_JOURNAL) this.journal.splice(0, this.journal.length - MAX_JOURNAL);
+    await atomicWrite(this.journalPath(), { version: 1, entries: this.journal });
+  }
+
+  private async appendSync(receipt: PrivateSyncReceipt, trigger: SyncTrigger, durationMs: number): Promise<void> {
+    await this.append(receipt.status === "uploaded" ? "Changes published" : "No changes", "info", {
+      category: "sync",
+      result: receipt.status === "uploaded" ? "published" : "unchanged",
+      trigger,
+      changes: { ...receipt.changes },
+      generation: receipt.generation,
+      durationMs
+    });
   }
 
   private publish(): void {
@@ -473,7 +572,7 @@ class SshPrivateDeployment implements PrivateDeploymentPort {
     await this.options.ssh.runFixed(target, [...prefix, "pull", "--quiet"], { timeoutMs: 10 * 60_000 });
     await this.options.ssh.runFixed(target, [...prefix, "up", "--detach", "--no-build"], { timeoutMs: 5 * 60_000 });
     await this.waitHealthy(target, prefix);
-    return { projectName: input.projectName, remoteDirectory };
+    return { projectName: input.projectName, remoteDirectory, ...(target.hostKeyAlgorithm ? { sshHostKeyAlgorithm: target.hostKeyAlgorithm } : {}) };
   }
 
   async disconnect(input: PrivateInstallation & { readonly server: ServerInput }): Promise<void> {
@@ -605,5 +704,67 @@ async function readRecord(path: string): Promise<PrivateRecord> {
   for (const id of [record.vault?.id, record.installationId, record.deviceId]) {
     if (id !== undefined && !OPAQUE_ID_RE.test(id)) throw new Error("private_setup_state_invalid");
   }
+  if (record.lastSyncResult !== undefined && !["published", "unchanged", "failed"].includes(record.lastSyncResult)) {
+    throw new Error("private_setup_state_invalid");
+  }
+  if (record.lastSyncChanges !== undefined && !isSyncChanges(record.lastSyncChanges)) throw new Error("private_setup_state_invalid");
+  if (record.sshHostKeyAlgorithm !== undefined && !isKnownHostAlgorithm(record.sshHostKeyAlgorithm)) {
+    throw new Error("private_setup_state_invalid");
+  }
   return record;
+}
+
+async function readKnownHostAlgorithm(path: string): Promise<SshHostKeyAlgorithm | undefined> {
+  try {
+    for (const line of (await readFile(path, "utf8")).split(/\r?\n/u)) {
+      const algorithm = line.trim().split(/\s+/u)[1];
+      if (isKnownHostAlgorithm(algorithm)) return algorithm;
+    }
+    return undefined;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return undefined;
+    throw new Error("private_known_hosts_invalid");
+  }
+}
+
+function isKnownHostAlgorithm(value: unknown): value is SshHostKeyAlgorithm {
+  return value === "ssh-ed25519" || value === "ecdsa-sha2-nistp256" || value === "ssh-rsa";
+}
+
+async function readJournal(path: string): Promise<JournalEntry[]> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(path, "utf8")) as unknown;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
+    throw new Error("private_journal_invalid");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("private_journal_invalid");
+  const record = value as { version?: unknown; entries?: unknown };
+  if (record.version !== 1 || !Array.isArray(record.entries) || record.entries.length > MAX_JOURNAL) {
+    throw new Error("private_journal_invalid");
+  }
+  return record.entries.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("private_journal_invalid");
+    const candidate = entry as JournalEntry;
+    if (
+      typeof candidate.at !== "string" || !Number.isFinite(new Date(candidate.at).getTime()) ||
+      typeof candidate.message !== "string" || candidate.message.length > 160 ||
+      !["info", "warn", "error"].includes(candidate.level) ||
+      (candidate.changes !== undefined && !isSyncChanges(candidate.changes))
+    ) throw new Error("private_journal_invalid");
+    return cloneJournalEntry(candidate);
+  });
+}
+
+function isSyncChanges(value: unknown): value is SyncChanges {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const changes = value as Record<string, unknown>;
+  return ["added", "modified", "removed", "unchanged", "total", "bytes"].every((key) =>
+    Number.isSafeInteger(changes[key]) && Number(changes[key]) >= 0
+  );
+}
+
+function cloneJournalEntry(entry: JournalEntry): JournalEntry {
+  return { ...entry, ...(entry.changes ? { changes: { ...entry.changes } } : {}) };
 }

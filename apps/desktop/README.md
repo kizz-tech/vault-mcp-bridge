@@ -16,6 +16,18 @@ integration, filesystem access, secret access, web navigation, or webviews.
 The Electron main process owns the native picker, scanner, safeStorage,
 OpenSSH/SFTP, Docker deployment, scheduler, and lifecycle.
 
+The packaged app also carries a local installer for the bounded Codex command:
+
+```sh
+node "/Applications/Vault Bridge.app/Contents/Resources/agent/install-agent-command.mjs"
+"$HOME/.local/bin/vault-bridge" doctor --json
+```
+
+The command reuses the Electron main-process backend. Its two-phase `prepare`
+and `setup` flow keeps the runtime key on stdin and requires an exact approved
+SSH fingerprint. See `docs/agent-setup.md`; this surface intentionally has no
+delete, arbitrary shell/path, or vault-write command.
+
 Development accepts `VAULT_BRIDGE_SECURE_TUNNEL_IMAGE` with an explicit local
 tag. Packaged production builds require a digest-pinned
 `secure-tunnel-config.json` supplied through

@@ -30,7 +30,10 @@ export interface SshTarget {
   user: string;
   port: number;
   hostKeyFingerprint?: string;
+  hostKeyAlgorithm?: SshHostKeyAlgorithm;
 }
+
+export type SshHostKeyAlgorithm = "ssh-ed25519" | "ecdsa-sha2-nistp256" | "ssh-rsa";
 
 export interface HostKeyStatus {
   fingerprint: string | null;
@@ -45,6 +48,7 @@ export interface HostKeyPinStore {
 
 export interface HostKeyRecord {
   fingerprint: string;
+  algorithm: SshHostKeyAlgorithm;
   line: string;
 }
 
@@ -176,6 +180,7 @@ const SSH_COMMAND = "/usr/bin/ssh";
 const SSH_KEYSCAN_COMMAND = "/usr/bin/ssh-keyscan";
 const SFTP_COMMAND = "/usr/bin/sftp";
 const MAX_COMMAND_OUTPUT_BYTES = 256 * 1024;
+const HOST_KEY_PREFERENCE: readonly SshHostKeyAlgorithm[] = ["ssh-ed25519", "ecdsa-sha2-nistp256", "ssh-rsa"];
 
 export class SshCommandError extends Error {
   constructor(
@@ -203,7 +208,7 @@ export class OpenSshAdapter {
       : undefined
   ) {}
 
-  static fromInput(input: ServerInput & { hostKeyFingerprint?: string }): SshTarget {
+  static fromInput(input: ServerInput & { hostKeyFingerprint?: string; hostKeyAlgorithm?: SshHostKeyAlgorithm }): SshTarget {
     const host = input.host.trim();
     const user = input.user.trim();
     const port = Number(input.port);
@@ -211,7 +216,13 @@ export class OpenSshAdapter {
     assertSshToken(user, "user");
     if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new TypeError("Invalid SSH port");
     return input.hostKeyFingerprint
-      ? { host, user, port, hostKeyFingerprint: normalizeFingerprint(input.hostKeyFingerprint) }
+      ? {
+          host,
+          user,
+          port,
+          hostKeyFingerprint: normalizeFingerprint(input.hostKeyFingerprint),
+          ...(input.hostKeyAlgorithm ? { hostKeyAlgorithm: input.hostKeyAlgorithm } : {})
+        }
       : { host, user, port };
   }
 
@@ -230,7 +241,8 @@ export class OpenSshAdapter {
       host,
       user,
       port,
-      ...(target.hostKeyFingerprint ? { hostKeyFingerprint: target.hostKeyFingerprint } : {})
+      ...(target.hostKeyFingerprint ? { hostKeyFingerprint: target.hostKeyFingerprint } : {}),
+      ...(target.hostKeyAlgorithm ? { hostKeyAlgorithm: target.hostKeyAlgorithm } : {})
     };
   }
 
@@ -240,24 +252,33 @@ export class OpenSshAdapter {
     return record?.fingerprint ?? null;
   }
 
-  async readHostKey(target: SshTarget): Promise<HostKeyRecord | null> {
+  async readHostKey(target: SshTarget, expectedFingerprint?: string): Promise<HostKeyRecord | null> {
     const result = await this.runner.run(
       SSH_KEYSCAN_COMMAND,
       ["-T", "5", "-p", String(target.port), "--", target.host],
       { timeoutMs: 10_000 }
     );
     if (result.code !== 0 || !result.stdout.trim()) return null;
-    const key = result.stdout
+    const records = result.stdout
       .split("\n")
       .map((line) => line.trim())
-      .find((line) => line && !line.startsWith("#"));
-    if (!key) return null;
-    const fields = key.split(/\s+/u);
-    const keyType = fields[1];
-    const publicKey = fields[2];
-    if (!keyType || !publicKey) throw new TypeError("Invalid host key record");
-    const host = target.port === 22 ? target.host : `[${target.host}]:${target.port}`;
-    return { fingerprint: fingerprintFromKeyscanLine(key), line: `${host} ${keyType} ${publicKey}` };
+      .filter((line) => line && !line.startsWith("#"))
+      .map((line): HostKeyRecord | null => {
+        const fields = line.split(/\s+/u);
+        const keyType = fields[1];
+        const publicKey = fields[2];
+        if (!isSshHostKeyAlgorithm(keyType) || !publicKey) return null;
+        const host = target.port === 22 ? target.host : `[${target.host}]:${target.port}`;
+        return { fingerprint: fingerprintFromKeyscanLine(line), algorithm: keyType, line: `${host} ${keyType} ${publicKey}` };
+      })
+      .filter((record): record is HostKeyRecord => Boolean(record));
+    if (!records.length) return null;
+    if (expectedFingerprint) {
+      const expected = normalizeFingerprint(expectedFingerprint);
+      const matching = records.find((record) => record.fingerprint === expected);
+      if (matching) return matching;
+    }
+    return HOST_KEY_PREFERENCE.map((algorithm) => records.find((record) => record.algorithm === algorithm)).find(Boolean) ?? null;
   }
 
   /** Compare a candidate against the pinned identity and fail closed on change. */
@@ -280,19 +301,19 @@ export class OpenSshAdapter {
   ): Promise<SshTarget> {
     const resolved = await this.resolve(target);
     if (!this.knownHostsFile || !this.knownHostsWriter) throw new Error("App-private known_hosts file is required");
-    const record = await this.readHostKey(resolved);
+    const expected = await pins.get(resolved);
+    const record = await this.readHostKey(resolved, expected ?? undefined);
     if (!record) throw new SshCommandError("Server identity unavailable", { code: 1, stdout: "", stderr: "" });
     const actual = record.fingerprint;
-    const expected = await pins.get(resolved);
     if (expected) {
       this.verifyHostFingerprint({ ...resolved, hostKeyFingerprint: expected }, actual);
       await this.knownHostsWriter.write(resolved, record.line);
-      return { ...resolved, hostKeyFingerprint: expected };
+      return { ...resolved, hostKeyFingerprint: expected, hostKeyAlgorithm: record.algorithm };
     }
     if (!(await confirm(actual))) throw new Error("Server identity was not confirmed");
     await pins.put(resolved, actual);
     await this.knownHostsWriter.write(resolved, record.line);
-    return { ...resolved, hostKeyFingerprint: actual };
+    return { ...resolved, hostKeyFingerprint: actual, hostKeyAlgorithm: record.algorithm };
   }
 
   /** Run a harmless server check with bounded, non-interactive OpenSSH options. */
@@ -331,6 +352,7 @@ export class OpenSshAdapter {
   ): string[] {
     const args = ["-p", String(target.port)];
     for (const option of SSH_SAFE_OPTIONS) args.push("-o", option);
+    if (target.hostKeyAlgorithm) args.push("-o", `HostKeyAlgorithms=${openSshHostKeyAlgorithms(target.hostKeyAlgorithm)}`);
     if (this.knownHostsFile) args.push("-o", `UserKnownHostsFile=${this.knownHostsFile}`);
     if ("configOnly" in mode) {
       args.push("-G", `${target.user}@${target.host}`);
@@ -404,6 +426,7 @@ export class OpenSftpAdapter implements SecretUploader {
     assertSshTarget(target);
     const args = ["-P", String(target.port)];
     for (const option of SSH_SAFE_OPTIONS) args.push("-o", option);
+    if (target.hostKeyAlgorithm) args.push("-o", `HostKeyAlgorithms=${openSshHostKeyAlgorithms(target.hostKeyAlgorithm)}`);
     if (this.knownHostsFile) args.push("-o", `UserKnownHostsFile=${this.knownHostsFile}`);
     args.push("-b", "-", `${target.user}@${target.host}`);
     return args;
@@ -501,6 +524,18 @@ function assertSshTarget(target: SshTarget): void {
   assertSshToken(target.host, "host");
   assertSshToken(target.user, "user");
   if (!Number.isInteger(target.port) || target.port < 1 || target.port > 65_535) throw new TypeError("Invalid SSH port");
+}
+
+function isSshHostKeyAlgorithm(value: unknown): value is SshHostKeyAlgorithm {
+  return typeof value === "string" && HOST_KEY_PREFERENCE.includes(value as SshHostKeyAlgorithm);
+}
+
+export function openSshHostKeyAlgorithms(value: SshHostKeyAlgorithm): string {
+  switch (value) {
+    case "ssh-rsa": return "rsa-sha2-512,rsa-sha2-256";
+    case "ssh-ed25519": return "ssh-ed25519";
+    case "ecdsa-sha2-nistp256": return "ecdsa-sha2-nistp256";
+  }
 }
 
 function assertSftpRemotePath(value: string): string {

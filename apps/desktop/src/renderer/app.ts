@@ -9,6 +9,9 @@ declare global {
 
 const bridge = window.vaultBridge;
 const elements = {
+  overviewView: required<HTMLElement>("overview-view"),
+  journalView: required<HTMLElement>("journal-view"),
+  overviewButton: required<HTMLButtonElement>("overview-button"),
   onboarding: required<HTMLElement>("onboarding"),
   ready: required<HTMLElement>("ready"),
   vaultValue: required<HTMLElement>("vault-value"),
@@ -22,11 +25,17 @@ const elements = {
   onboardingError: required<HTMLElement>("onboarding-error"),
   statusPill: required<HTMLElement>("status-pill"),
   readySummary: required<HTMLElement>("ready-summary"),
+  vaultMetric: required<HTMLElement>("vault-metric"),
+  vaultSize: required<HTMLElement>("vault-size"),
   readyServer: required<HTMLElement>("ready-server"),
   readyServerAction: required<HTMLButtonElement>("ready-server-action"),
   readyChatGpt: required<HTMLElement>("ready-chatgpt"),
   chatGptAction: required<HTMLButtonElement>("chatgpt-action"),
   readySync: required<HTMLElement>("ready-sync"),
+  syncTitle: required<HTMLElement>("sync-title"),
+  lastCheck: required<HTMLElement>("last-check"),
+  nextCheck: required<HTMLElement>("next-check"),
+  lastDiff: required<HTMLElement>("last-diff"),
   pauseAction: required<HTMLButtonElement>("pause-action"),
   syncAction: required<HTMLButtonElement>("sync-action"),
   readyError: required<HTMLElement>("ready-error"),
@@ -47,9 +56,11 @@ const elements = {
   openTunnels: required<HTMLButtonElement>("open-tunnels"),
   openApiKeys: required<HTMLButtonElement>("open-api-keys"),
   journalButton: required<HTMLButtonElement>("journal-button"),
-  journalDialog: required<HTMLDialogElement>("journal-dialog"),
-  journalClose: required<HTMLButtonElement>("journal-close"),
   journalList: required<HTMLOListElement>("journal-list"),
+  journalEmpty: required<HTMLElement>("journal-empty"),
+  journalLastCheck: required<HTMLElement>("journal-last-check"),
+  journalSchedule: required<HTMLElement>("journal-schedule"),
+  journalCount: required<HTMLElement>("journal-count"),
   menuButton: required<HTMLButtonElement>("menu-button"),
   settingsDialog: required<HTMLDialogElement>("settings-dialog"),
   loginToggle: required<HTMLInputElement>("login-toggle"),
@@ -59,11 +70,13 @@ const elements = {
 };
 
 let currentState: DesktopState = { ...EMPTY_STATE };
+let currentJournal: JournalEntry[] = [];
+let journalFilter: "all" | "changes" | "errors" = "all";
 
 function render(state: DesktopState): void {
   currentState = state;
   const hasSetupInputs = Boolean(state.vault && state.server && (!state.requiresTunnelConfig || state.tunnel));
-  const ready = state.mode === "ready" || state.mode === "synchronizing";
+  const ready = state.serverCopy === "active" || state.mode === "ready" || state.mode === "synchronizing";
   elements.onboarding.hidden = ready;
   elements.ready.hidden = !ready;
   elements.attention.hidden = !state.attention;
@@ -84,13 +97,19 @@ function render(state: DesktopState): void {
   elements.readySummary.textContent = state.vault
     ? `${state.vault.noteCount.toLocaleString()} notes · ${formatBytes(state.vault.bytes)}${publishedText(state)}`
     : "";
+  elements.vaultMetric.textContent = state.vault ? `${state.vault.noteCount.toLocaleString()} notes` : "—";
+  elements.vaultSize.textContent = state.vault ? formatBytes(state.vault.bytes) : "—";
   elements.readyServer.textContent = state.server?.label ?? "Not configured";
   elements.readyChatGpt.textContent = state.mcp?.host ?? "Not configured";
   elements.chatGptAction.textContent = state.requiresTunnelConfig ? "Open ChatGPT" : "Copy URL & Open";
-  elements.readySync.textContent = state.paused ? "Paused" : "Automatic";
+  elements.readySync.textContent = state.paused ? "Paused" : `Every ${formatInterval(state.sync.intervalMinutes)}`;
+  elements.syncTitle.textContent = state.paused ? "Paused" : "Automatic";
+  elements.lastCheck.textContent = state.sync.lastCheckedAt ? formatDateTime(state.sync.lastCheckedAt) : "Not yet";
+  elements.nextCheck.textContent = state.paused ? "Paused" : state.sync.nextCheckAt ? formatDateTime(state.sync.nextCheckAt) : "When app starts";
+  renderDiff(elements.lastDiff, state.sync.lastChanges);
   elements.pauseAction.textContent = state.paused ? "Resume" : "Pause";
   elements.syncAction.disabled = state.mode === "synchronizing" || state.paused;
-  elements.syncAction.textContent = state.mode === "synchronizing" ? statusText(state.phase) : "Synchronize";
+  elements.syncAction.textContent = state.mode === "synchronizing" ? statusText(state.phase) : "Sync now";
   elements.attentionMessage.textContent = state.attention?.message ?? "";
   elements.attentionAction.textContent = attentionActionText(state.attention?.action);
   elements.attentionAction.disabled = !state.attention;
@@ -154,10 +173,15 @@ async function togglePause(): Promise<void> {
 }
 
 async function openJournal(): Promise<void> {
+  await refreshJournal();
+  showView("activity");
+}
+
+async function refreshJournal(): Promise<void> {
   const entries = await runValue(() => bridge.getJournal(), elements.readyError);
   if (entries) {
-    renderJournal(entries);
-    elements.journalDialog.showModal();
+    currentJournal = entries;
+    renderJournal();
   }
 }
 
@@ -216,18 +240,89 @@ async function runValue<T>(operation: () => Promise<T>, errorElement: HTMLElemen
   }
 }
 
-function renderJournal(entries: JournalEntry[]): void {
+function renderJournal(): void {
+  const entries = currentJournal
+    .filter((entry) => journalFilter === "all" || (journalFilter === "changes" ? entry.result === "published" : entry.level === "error"))
+    .slice(-200)
+    .reverse();
   elements.journalList.replaceChildren();
-  for (const entry of entries.slice(-200)) {
+  elements.journalEmpty.hidden = entries.length > 0;
+  elements.journalCount.textContent = currentJournal.length.toLocaleString();
+  elements.journalLastCheck.textContent = currentState.sync.lastCheckedAt ? formatDateTime(currentState.sync.lastCheckedAt) : "Not yet";
+  elements.journalSchedule.textContent = currentState.paused ? "Paused" : `Every ${formatInterval(currentState.sync.intervalMinutes)}`;
+  for (const entry of entries) {
     const item = document.createElement("li");
-    item.className = entry.level;
-    const time = document.createElement("time");
-    time.textContent = formatTime(entry.at);
-    const message = document.createElement("span");
+    item.className = `activity-entry ${entry.level}`;
+    const marker = document.createElement("span");
+    marker.className = "event-marker";
+    const body = document.createElement("div");
+    body.className = "event-body";
+    const heading = document.createElement("div");
+    heading.className = "event-heading";
+    const message = document.createElement("strong");
     message.textContent = entry.message;
-    item.append(time, message);
+    const time = document.createElement("time");
+    time.dateTime = entry.at;
+    time.textContent = formatDateTime(entry.at);
+    heading.append(message, time);
+    body.append(heading);
+    if (entry.changes) {
+      const changes = document.createElement("div");
+      changes.className = "event-changes";
+      changes.append(
+        changeChip("Added", entry.changes.added, "added"),
+        changeChip("Modified", entry.changes.modified, "modified"),
+        changeChip("Removed", entry.changes.removed, "removed"),
+        changeChip("Unchanged", entry.changes.unchanged, "unchanged")
+      );
+      body.append(changes);
+    }
+    const metadata = eventMetadata(entry);
+    if (metadata.length) {
+      const meta = document.createElement("div");
+      meta.className = "event-meta";
+      meta.textContent = metadata.join(" · ");
+      body.append(meta);
+    }
+    item.append(marker, body);
     elements.journalList.append(item);
   }
+}
+
+function changeChip(label: string, value: number, kind: string): HTMLElement {
+  const chip = document.createElement("span");
+  chip.className = `change-chip ${kind}`;
+  chip.textContent = `${label} ${value.toLocaleString()}`;
+  return chip;
+}
+
+function eventMetadata(entry: JournalEntry): string[] {
+  const values: string[] = [];
+  if (entry.trigger) values.push(triggerText(entry.trigger));
+  if (entry.generation !== undefined) values.push(`Generation ${entry.generation.toLocaleString()}`);
+  if (entry.changes) values.push(`${entry.changes.total.toLocaleString()} notes`, formatBytes(entry.changes.bytes));
+  if (entry.durationMs !== undefined) values.push(formatDuration(entry.durationMs));
+  return values;
+}
+
+function renderDiff(element: HTMLElement, changes: DesktopState["sync"]["lastChanges"]): void {
+  element.replaceChildren();
+  element.hidden = !changes;
+  if (!changes) return;
+  element.append(
+    changeChip("Added", changes.added, "added"),
+    changeChip("Modified", changes.modified, "modified"),
+    changeChip("Removed", changes.removed, "removed"),
+    changeChip("Unchanged", changes.unchanged, "unchanged")
+  );
+}
+
+function showView(view: "overview" | "activity"): void {
+  const activity = view === "activity";
+  elements.overviewView.hidden = activity;
+  elements.journalView.hidden = !activity;
+  elements.overviewButton.classList.toggle("active", !activity);
+  elements.journalButton.classList.toggle("active", activity);
 }
 
 function statusText(phase: DesktopState["phase"]): string {
@@ -261,6 +356,38 @@ function attentionActionText(action: NonNullable<DesktopState["attention"]>["act
 function formatTime(value: string): string {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--";
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "—";
+  const today = new Date();
+  const sameDay = date.toDateString() === today.toDateString();
+  return date.toLocaleString([], sameDay
+    ? { hour: "2-digit", minute: "2-digit" }
+    : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function formatInterval(minutes: number): string {
+  if (minutes === 1) return "minute";
+  if (minutes < 60) return `${minutes} minutes`;
+  const hours = minutes / 60;
+  return Number.isInteger(hours) ? `${hours} ${hours === 1 ? "hour" : "hours"}` : `${minutes} minutes`;
+}
+
+function formatDuration(milliseconds: number): string {
+  if (milliseconds < 1_000) return `${Math.max(0, Math.round(milliseconds))} ms`;
+  return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)} s`;
+}
+
+function triggerText(trigger: NonNullable<JournalEntry["trigger"]>): string {
+  switch (trigger) {
+    case "scheduled": return "Automatic";
+    case "startup": return "App launch";
+    case "resume": return "Resume";
+    case "setup": return "First sync";
+    default: return "Manual";
+  }
 }
 
 function clearError(element: HTMLElement): void {
@@ -301,8 +428,17 @@ elements.tunnelCancel.addEventListener("click", () => elements.tunnelDialog.clos
 elements.tunnelForm.addEventListener("submit", (event) => void configureTunnel(event));
 elements.openTunnels.addEventListener("click", () => void bridge.openExternal("https://platform.openai.com/settings/organization/tunnels"));
 elements.openApiKeys.addEventListener("click", () => void bridge.openExternal("https://platform.openai.com/settings/organization/api-keys"));
+elements.overviewButton.addEventListener("click", () => showView("overview"));
 elements.journalButton.addEventListener("click", () => void openJournal());
-elements.journalClose.addEventListener("click", () => elements.journalDialog.close());
+for (const filter of document.querySelectorAll<HTMLButtonElement>(".filter")) {
+  filter.addEventListener("click", () => {
+    const value = filter.dataset.filter;
+    if (value !== "all" && value !== "changes" && value !== "errors") return;
+    journalFilter = value;
+    for (const button of document.querySelectorAll<HTMLButtonElement>(".filter")) button.classList.toggle("active", button === filter);
+    renderJournal();
+  });
+}
 elements.menuButton.addEventListener("click", () => elements.settingsDialog.showModal());
 elements.loginToggle.addEventListener("change", () => void bridge.setStartAtLogin(elements.loginToggle.checked));
 elements.disconnectAction.addEventListener("click", () => void disconnect());
@@ -321,7 +457,10 @@ elements.attentionAction.addEventListener("click", () => {
 void (async () => {
   try {
     render(await bridge.getState());
-    bridge.onState(render);
+    bridge.onState((state) => {
+      render(state);
+      if (!elements.journalView.hidden) void refreshJournal();
+    });
   } catch {
     elements.onboardingError.textContent = "Operation failed";
     elements.onboardingError.hidden = false;

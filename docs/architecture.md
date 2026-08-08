@@ -56,7 +56,8 @@ Selecting **Set up** authorizes one bounded operation:
 
 1. scan the selected vault and show note count/bytes;
 2. resolve SSH config, read and explicitly confirm the first host fingerprint,
-   then pin it in an app-private `known_hosts` file;
+   then pin its fingerprint and exact host-key algorithm in an app-private
+   `known_hosts` file;
 3. verify Linux, Docker Compose, outbound HTTPS, and basic capacity;
 4. stage a digest-pinned Compose template and one runtime secret through SFTP;
 5. start the exact installation project and wait for its health check;
@@ -66,6 +67,20 @@ Selecting **Set up** authorizes one bounded operation:
 The app uses argument arrays with `shell: false` locally. Remote actions are a
 fixed token allowlist; renderer input cannot become a shell command or Compose
 document.
+
+### Agent installation boundary
+
+The packaged executable also exposes a bounded `--agent` mode, installed for
+Codex as the `vault-bridge` command. It is not a daemon, TCP service, or second
+backend. `doctor`, `status`, and `journal` return redacted JSON. `prepare`
+accepts a strict plan containing only the vault root, SSH target, and tunnel ID;
+the runtime key arrives on bounded stdin and is immediately handed to the same
+safeStorage-backed backend as the GUI. `setup` proceeds only when its
+`--approve-host-fingerprint` value exactly matches the newly observed key.
+
+There is no agent command for deletion, arbitrary server commands, raw file
+reads, changing projection policy, or vault writes. The desktop UI remains the
+human-visible status and recovery surface.
 
 ## Vault reader
 
@@ -82,6 +97,13 @@ Frontmatter is parsed as untrusted data under a non-executable YAML schema.
 Each sync creates a complete immutable generation. A durable pending snapshot
 is retried byte-for-byte after interruption. If the projection digest is
 unchanged, nothing is uploaded.
+
+The local sync state retains only opaque document IDs, source hashes, and byte
+counts for the previous successful generation. This permits aggregate
+added/modified/removed/unchanged reporting without logging titles, paths, or
+content. The persistent Activity journal stores those aggregates plus trigger,
+generation, duration, and timestamps. Publication time changes only after an
+uploaded generation; last-check time also advances for unchanged scans.
 
 ## Private import and store
 

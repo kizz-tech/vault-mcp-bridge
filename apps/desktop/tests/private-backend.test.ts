@@ -31,7 +31,8 @@ describe("private secure-tunnel desktop backend", () => {
     const deployment: PrivateDeploymentPort = {
       setup: vi.fn(async (input) => ({
         projectName: input.projectName,
-        remoteDirectory: `/home/operator/.local/share/vault-bridge/installations/${input.installationId}`
+        remoteDirectory: `/home/operator/.local/share/vault-bridge/installations/${input.installationId}`,
+        sshHostKeyAlgorithm: "ssh-ed25519" as const
       })),
       disconnect: vi.fn(async () => undefined),
       remove: vi.fn(async () => undefined)
@@ -58,7 +59,13 @@ describe("private secure-tunnel desktop backend", () => {
       },
       deployment,
       tunnelVerifier: async () => undefined,
-      syncer: async () => ({ status: "uploaded", generation: 1, documentCount: 1, digest: "digest_synthetic_0001" }),
+      syncer: async () => ({
+        status: "uploaded",
+        generation: 1,
+        documentCount: 1,
+        changes: { added: 1, modified: 0, removed: 0, unchanged: 0, total: 1, bytes: content.length },
+        digest: "digest_synthetic_0001"
+      }),
       now: () => new Date("2026-08-08T00:00:00.000Z")
     });
 
@@ -75,6 +82,10 @@ describe("private secure-tunnel desktop backend", () => {
       serverCopy: "active",
       mcp: { host: "Connected" }
     });
+    expect(ready.sync).toMatchObject({ intervalMinutes: 5, lastResult: "published" });
+    expect(await backend.getJournal()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: "Changes published", result: "published", changes: { added: 1, modified: 0, removed: 0, unchanged: 0, total: 1, bytes: content.length } })
+    ]));
     expect(deployment.setup).toHaveBeenCalledOnce();
     expect(await readFile(join(appDataPath, "private-setup.json"), "utf8")).not.toContain("TEST_RUNTIME_API_KEY");
 

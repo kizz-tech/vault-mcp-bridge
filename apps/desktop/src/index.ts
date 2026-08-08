@@ -1,4 +1,5 @@
 export * from "./backend.js";
+export * from "./agent-command.js";
 export * from "./edge-client.js";
 export * from "./lease.js";
 export * from "./oauth-client.js";

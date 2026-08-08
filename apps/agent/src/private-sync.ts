@@ -35,6 +35,7 @@ export type PrivateSyncConfig = {
   sshUser?: string;
   sshPort?: number;
   sshKnownHostsFile?: string;
+  sshHostKeyAlgorithm?: "ssh-ed25519" | "ecdsa-sha2-nistp256" | "ssh-rsa";
   remoteDirectory: string;
   projectName: string;
   include: string[];
@@ -46,19 +47,38 @@ type PrivateSyncState = {
   idKey: string;
   lastGeneration: number;
   lastProjectionDigest?: string;
+  lastProjection?: ProjectionEntry[];
   lastReceipt?: unknown;
 };
 
 type PendingSnapshot = {
   version: 1;
   projectionDigest: string;
+  projection?: ProjectionEntry[];
+  changes?: PrivateSyncChanges;
   snapshot: Snapshot;
+};
+
+type ProjectionEntry = {
+  id: string;
+  sourceHash: string;
+  bytes: number;
+};
+
+export type PrivateSyncChanges = {
+  added: number;
+  modified: number;
+  removed: number;
+  unchanged: number;
+  total: number;
+  bytes: number;
 };
 
 export type PrivateSyncReceipt = {
   status: "uploaded" | "unchanged";
   generation: number;
   documentCount: number;
+  changes: PrivateSyncChanges;
   digest?: string;
 };
 
@@ -119,6 +139,11 @@ export const validatePrivateSyncConfig = (value: unknown): PrivateSyncConfig => 
     : typeof candidate.sshKnownHostsFile === "string" && isAbsolute(candidate.sshKnownHostsFile) && resolve(candidate.sshKnownHostsFile) === candidate.sshKnownHostsFile
       ? candidate.sshKnownHostsFile
       : "";
+  const sshHostKeyAlgorithm = candidate.sshHostKeyAlgorithm === undefined
+    ? undefined
+    : ["ssh-ed25519", "ecdsa-sha2-nistp256", "ssh-rsa"].includes(String(candidate.sshHostKeyAlgorithm))
+      ? candidate.sshHostKeyAlgorithm as PrivateSyncConfig["sshHostKeyAlgorithm"]
+      : "";
   const remoteDirectory = typeof candidate.remoteDirectory === "string" &&
     REMOTE_DIRECTORY_RE.test(candidate.remoteDirectory) &&
     !candidate.remoteDirectory.includes("..") &&
@@ -131,6 +156,8 @@ export const validatePrivateSyncConfig = (value: unknown): PrivateSyncConfig => 
     sshUser === "" ||
     (sshPort !== undefined && (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65_535)) ||
     sshKnownHostsFile === "" ||
+    sshHostKeyAlgorithm === "" ||
+    (sshKnownHostsFile !== undefined && sshHostKeyAlgorithm === undefined) ||
     ((sshUser !== undefined || sshPort !== undefined) && sshKnownHostsFile === undefined) ||
     !remoteDirectory ||
     !projectName
@@ -144,6 +171,7 @@ export const validatePrivateSyncConfig = (value: unknown): PrivateSyncConfig => 
     ...(sshUser ? { sshUser } : {}),
     ...(sshPort !== undefined ? { sshPort } : {}),
     ...(sshKnownHostsFile ? { sshKnownHostsFile } : {}),
+    ...(sshHostKeyAlgorithm ? { sshHostKeyAlgorithm } : {}),
     remoteDirectory,
     projectName,
     include: stringList(candidate.include, DEFAULT_INCLUDE),
@@ -163,6 +191,36 @@ const projectionDigest = (scan: ScanResult): string => sha256Base64Url(canonical
     }))
     .sort((left, right) => left.id.localeCompare(right.id)),
 ));
+
+const projection = (scan: ScanResult): ProjectionEntry[] => [...scan.files]
+  .map((file) => ({
+    id: file.id ?? "",
+    sourceHash: file.sha256 ?? sha256Base64Url(file.content),
+    bytes: file.bytes,
+  }))
+  .sort((left, right) => left.id.localeCompare(right.id));
+
+const changesBetween = (before: readonly ProjectionEntry[], after: readonly ProjectionEntry[]): PrivateSyncChanges => {
+  const previous = new Map(before.map((entry) => [entry.id, entry]));
+  let added = 0;
+  let modified = 0;
+  let unchanged = 0;
+  for (const entry of after) {
+    const prior = previous.get(entry.id);
+    if (!prior) added += 1;
+    else if (prior.sourceHash !== entry.sourceHash) modified += 1;
+    else unchanged += 1;
+    previous.delete(entry.id);
+  }
+  return {
+    added,
+    modified,
+    removed: previous.size,
+    unchanged,
+    total: after.length,
+    bytes: after.reduce((total, entry) => total + entry.bytes, 0),
+  };
+};
 
 const commandArgument = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -206,6 +264,9 @@ export const uploadSnapshotOverSsh: SnapshotUploader = async ({ config, snapshot
     ...(validated.sshKnownHostsFile
       ? ["-o", "StrictHostKeyChecking=yes", "-o", `UserKnownHostsFile=${validated.sshKnownHostsFile}`]
       : []),
+    ...(validated.sshHostKeyAlgorithm
+      ? ["-o", `HostKeyAlgorithms=${privateHostKeyAlgorithms(validated.sshHostKeyAlgorithm)}`]
+      : []),
     ...(validated.sshPort !== undefined ? ["-p", String(validated.sshPort)] : []),
     "--", destination,
     buildPrivateImportCommand(validated),
@@ -227,6 +288,14 @@ export const uploadSnapshotOverSsh: SnapshotUploader = async ({ config, snapshot
     return JSON.parse(lines[0]!) as unknown;
   } catch {
     throw new Error("private sync receipt is invalid");
+  }
+};
+
+const privateHostKeyAlgorithms = (value: NonNullable<PrivateSyncConfig["sshHostKeyAlgorithm"]>): string => {
+  switch (value) {
+    case "ssh-rsa": return "rsa-sha2-512,rsa-sha2-256";
+    case "ssh-ed25519": return "ssh-ed25519";
+    case "ecdsa-sha2-nistp256": return "ecdsa-sha2-nistp256";
   }
 };
 
@@ -266,11 +335,27 @@ export const runPrivateSync = async (options: {
     });
     if (scan.errors.length > 0) throw new Error(`vault scan is incomplete (${scan.errors.length} item(s))`);
     const digest = projectionDigest(scan);
+    const currentProjection = projection(scan);
     if (state.lastProjectionDigest === digest) {
-      return { status: "unchanged", generation: state.lastGeneration, documentCount: scan.files.length };
+      if (!state.lastProjection) {
+        state = { ...state, lastProjection: currentProjection };
+        await atomicWriteJson(statePath, state);
+      }
+      return {
+        status: "unchanged",
+        generation: state.lastGeneration,
+        documentCount: scan.files.length,
+        changes: changesBetween(currentProjection, currentProjection),
+      };
     }
     const payload = buildSnapshot(scan, config.vaultId, state.lastGeneration + 1, (options.now ?? (() => new Date()))().toISOString());
-    pending = { version: 1, projectionDigest: digest, snapshot: SnapshotSchema.parse(payload.snapshot) };
+    pending = {
+      version: 1,
+      projectionDigest: digest,
+      projection: currentProjection,
+      changes: changesBetween(state.lastProjection ?? [], currentProjection),
+      snapshot: SnapshotSchema.parse(payload.snapshot),
+    };
     await atomicWriteJson(pendingPath, pending);
   }
 
@@ -286,6 +371,7 @@ export const runPrivateSync = async (options: {
     ...state,
     lastGeneration: pending.snapshot.generation,
     lastProjectionDigest: pending.projectionDigest,
+    ...(pending.projection ? { lastProjection: pending.projection } : {}),
     lastReceipt: receipt,
   };
   await atomicWriteJson(statePath, state);
@@ -296,6 +382,14 @@ export const runPrivateSync = async (options: {
     status: "uploaded",
     generation: pending.snapshot.generation,
     documentCount: pending.snapshot.documents.length,
+    changes: pending.changes ?? {
+      added: pending.snapshot.documents.length,
+      modified: 0,
+      removed: 0,
+      unchanged: 0,
+      total: pending.snapshot.documents.length,
+      bytes: pending.snapshot.documents.reduce((total, document) => total + Buffer.byteLength(document.text, "utf8"), 0),
+    },
     digest: pending.snapshot.digest,
   };
 };
