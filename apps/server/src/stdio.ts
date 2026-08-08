@@ -17,7 +17,7 @@ const store = new VaultStore(config.databasePath, config.nonceRetentionSeconds, 
 });
 
 const handle = serveStdio(() => {
-  const server = new McpServer({ name: "vault-mcp-bridge", version: "0.1.3" });
+  const server = new McpServer({ name: "vault-mcp-bridge", version: "0.1.4" });
   registerVaultTools(server as unknown as McpServerLike, store, config);
   return server;
 });

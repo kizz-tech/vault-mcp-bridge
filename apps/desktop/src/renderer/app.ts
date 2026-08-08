@@ -72,7 +72,6 @@ const elements = {
 let currentState: DesktopState = { ...EMPTY_STATE };
 let currentJournal: JournalEntry[] = [];
 let journalFilter: "all" | "changes" | "errors" = "all";
-let stopStateListener: (() => void) | null = null;
 const PASSIVE_REFRESH_MS = 30_000;
 
 function render(state: DesktopState): void {
@@ -487,7 +486,7 @@ void (async () => {
   try {
     elements.loginToggle.checked = await bridge.getStartAtLogin();
     render(await bridge.getState());
-    stopStateListener = bridge.onState((state) => {
+    bridge.onState((state) => {
       render(state);
       if (!elements.journalView.hidden) void refreshJournal();
     });
@@ -498,10 +497,6 @@ void (async () => {
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) void refreshVisibleState().catch(() => undefined);
     });
-    window.addEventListener("beforeunload", () => {
-      stopStateListener?.();
-      stopStateListener = null;
-    }, { once: true });
   } catch {
     elements.onboardingError.textContent = "Operation failed";
     elements.onboardingError.hidden = false;

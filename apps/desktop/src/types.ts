@@ -164,7 +164,7 @@ export interface VaultBridgeRendererApi {
   disconnect(): Promise<DesktopState>;
   /** Revoke remote access, remove the exact service, and delete its replica. */
   removeServerCopy(): Promise<DesktopState>;
-  onState(listener: (state: DesktopState) => void): () => void;
+  onState(listener: (state: DesktopState) => void): void;
   openExternal(url: string): Promise<void>;
 }
 

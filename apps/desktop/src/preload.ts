@@ -26,7 +26,6 @@ const api: VaultBridgeRendererApi = Object.freeze({
   onState: (listener: (state: DesktopState) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, state: DesktopState): void => listener(state);
     ipcRenderer.on("state:changed", wrapped);
-    return () => ipcRenderer.removeListener("state:changed", wrapped);
   },
   openExternal: async (url: string) => {
     if (!isAllowedExternalUrl(url)) throw new Error("Only HTTPS links can be opened");
