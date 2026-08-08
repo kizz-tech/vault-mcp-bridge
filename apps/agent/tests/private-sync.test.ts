@@ -1,8 +1,9 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { buildPrivateImportCommand, runPrivateSync, validatePrivateSyncConfig } from "../src/private-sync.js";
+import { buildPrivateImportCommand, hostKeyAliasOption, runPrivateSync, userKnownHostsFileOption, validatePrivateSyncConfig, writeSnapshotInput } from "../src/private-sync.js";
 import type { ScanResult } from "@vault-mcp-bridge/agent-core";
 import { sha256Base64Url } from "@vault-mcp-bridge/contracts";
 
@@ -28,6 +29,23 @@ const scan = (content = "# Synthetic note\n"): ScanResult => {
 };
 
 describe("private SSH snapshot publisher", () => {
+  it("quotes an app-private known_hosts path for OpenSSH parsing", () => {
+    expect(userKnownHostsFileOption("/Users/example/Library/Application Support/Vault Bridge/known_hosts"))
+      .toBe('UserKnownHostsFile="/Users/example/Library/Application Support/Vault Bridge/known_hosts"');
+    expect(hostKeyAliasOption("203.0.113.8", 2222)).toBe("HostKeyAlias=[203.0.113.8]:2222");
+  });
+
+  it("converts an early SSH stdin close into a handled sync error", async () => {
+    const pipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    const input = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback(pipeError);
+      }
+    });
+
+    await expect(writeSnapshotInput(input, "x".repeat(64 * 1024))).resolves.toMatchObject({ code: "EPIPE" });
+  });
+
   it("builds only the fixed Docker import command from validated fields", () => {
     const value = validatePrivateSyncConfig(config("/tmp/synthetic-vault"));
     const command = buildPrivateImportCommand(value);
@@ -40,8 +58,9 @@ describe("private SSH snapshot publisher", () => {
       sshUser: "operator",
       sshPort: 2222,
       sshKnownHostsFile: "/tmp/synthetic-known-hosts",
+      sshHostKeyAlias: "server.example.invalid",
       sshHostKeyAlgorithm: "ssh-rsa",
-    })).toMatchObject({ sshUser: "operator", sshPort: 2222, sshHostKeyAlgorithm: "ssh-rsa" });
+    })).toMatchObject({ sshUser: "operator", sshPort: 2222, sshHostKeyAlias: "server.example.invalid", sshHostKeyAlgorithm: "ssh-rsa" });
     expect(() => validatePrivateSyncConfig({ ...value, sshHostKeyAlgorithm: "ssh-dss" })).toThrow(/SSH target/u);
   });
 

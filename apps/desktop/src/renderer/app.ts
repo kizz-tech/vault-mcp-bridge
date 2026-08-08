@@ -92,6 +92,7 @@ function render(state: DesktopState): void {
   elements.setupAction.textContent = state.mode === "synchronizing" ? statusText(state.phase) : "Set up";
 
   const status = state.mode === "synchronizing" ? "Synchronizing" : state.mode === "attention" ? "Needs attention" : "Ready";
+  elements.statusPill.hidden = state.mode === "attention";
   elements.statusPill.textContent = status;
   elements.statusPill.className = `status ${state.mode}`;
   elements.readySummary.textContent = state.vault
@@ -266,8 +267,9 @@ function renderJournal(): void {
     message.textContent = entry.message;
     heading.append(message);
     body.append(heading);
+    let changes: HTMLDivElement | undefined;
     if (entry.changes) {
-      const changes = document.createElement("div");
+      changes = document.createElement("div");
       changes.className = "event-changes";
       changes.append(
         changeChip("Added", entry.changes.added, "added"),
@@ -275,7 +277,6 @@ function renderJournal(): void {
         changeChip("Removed", entry.changes.removed, "removed"),
         changeChip("Unchanged", entry.changes.unchanged, "unchanged")
       );
-      body.append(changes);
     }
     const metadata = eventMetadata(entry);
     if (metadata.length) {
@@ -285,6 +286,7 @@ function renderJournal(): void {
       body.append(meta);
     }
     item.append(time, marker, body);
+    if (changes) item.append(changes);
     elements.journalList.append(item);
   }
 }
@@ -292,17 +294,37 @@ function renderJournal(): void {
 function changeChip(label: string, value: number, kind: string): HTMLElement {
   const chip = document.createElement("span");
   chip.className = `change-chip ${kind}`;
-  chip.textContent = `${label} ${value.toLocaleString()}`;
+  const labelElement = document.createElement("span");
+  labelElement.className = "change-label";
+  labelElement.textContent = label;
+  const valueElement = document.createElement("strong");
+  valueElement.className = "change-value";
+  valueElement.textContent = value.toLocaleString();
+  chip.append(labelElement, valueElement);
   return chip;
 }
 
 function eventMetadata(entry: JournalEntry): string[] {
   const values: string[] = [];
+  if (entry.diagnostic) values.push(diagnosticText(entry.diagnostic.code));
   if (entry.trigger) values.push(triggerText(entry.trigger));
   if (entry.generation !== undefined) values.push(`Generation ${entry.generation.toLocaleString()}`);
   if (entry.changes) values.push(`${entry.changes.total.toLocaleString()} notes`, formatBytes(entry.changes.bytes));
   if (entry.durationMs !== undefined) values.push(formatDuration(entry.durationMs));
   return values;
+}
+
+function diagnosticText(code: NonNullable<JournalEntry["diagnostic"]>["code"]): string {
+  switch (code) {
+    case "vault_unavailable": return "Vault";
+    case "ssh_trust_failed": return "SSH trust";
+    case "ssh_auth_failed": return "SSH authentication";
+    case "server_unreachable": return "Server connection";
+    case "runtime_unavailable": return "Server runtime";
+    case "openai_tunnel_unavailable": return "OpenAI tunnel";
+    case "snapshot_rejected": return "Snapshot import";
+    default: return "Synchronization";
+  }
 }
 
 function renderDiff(element: HTMLElement, changes: DesktopState["sync"]["lastChanges"]): void {
@@ -456,6 +478,7 @@ elements.attentionAction.addEventListener("click", () => {
 
 void (async () => {
   try {
+    elements.loginToggle.checked = await bridge.getStartAtLogin();
     render(await bridge.getState());
     bridge.onState((state) => {
       render(state);

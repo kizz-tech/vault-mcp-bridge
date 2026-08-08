@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 
 import type { ServerInput } from "./types.js";
 
@@ -175,6 +175,12 @@ export const SSH_SAFE_OPTIONS = Object.freeze([
   "RequestTTY=no",
   "ConnectTimeout=15"
 ]);
+
+export function userKnownHostsFileOption(path: string): string {
+  if (!isAbsolute(path) || /[\0\r\n]/u.test(path)) throw new TypeError("Invalid known_hosts path");
+  const quoted = path.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+  return `UserKnownHostsFile="${quoted}"`;
+}
 
 const SSH_COMMAND = "/usr/bin/ssh";
 const SSH_KEYSCAN_COMMAND = "/usr/bin/ssh-keyscan";
@@ -353,7 +359,7 @@ export class OpenSshAdapter {
     const args = ["-p", String(target.port)];
     for (const option of SSH_SAFE_OPTIONS) args.push("-o", option);
     if (target.hostKeyAlgorithm) args.push("-o", `HostKeyAlgorithms=${openSshHostKeyAlgorithms(target.hostKeyAlgorithm)}`);
-    if (this.knownHostsFile) args.push("-o", `UserKnownHostsFile=${this.knownHostsFile}`);
+    if (this.knownHostsFile) args.push("-o", userKnownHostsFileOption(this.knownHostsFile));
     if ("configOnly" in mode) {
       args.push("-G", `${target.user}@${target.host}`);
     } else {
@@ -427,7 +433,7 @@ export class OpenSftpAdapter implements SecretUploader {
     const args = ["-P", String(target.port)];
     for (const option of SSH_SAFE_OPTIONS) args.push("-o", option);
     if (target.hostKeyAlgorithm) args.push("-o", `HostKeyAlgorithms=${openSshHostKeyAlgorithms(target.hostKeyAlgorithm)}`);
-    if (this.knownHostsFile) args.push("-o", `UserKnownHostsFile=${this.knownHostsFile}`);
+    if (this.knownHostsFile) args.push("-o", userKnownHostsFileOption(this.knownHostsFile));
     args.push("-b", "-", `${target.user}@${target.host}`);
     return args;
   }

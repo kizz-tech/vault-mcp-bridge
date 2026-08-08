@@ -102,8 +102,10 @@ The local sync state retains only opaque document IDs, source hashes, and byte
 counts for the previous successful generation. This permits aggregate
 added/modified/removed/unchanged reporting without logging titles, paths, or
 content. The persistent Activity journal stores those aggregates plus trigger,
-generation, duration, and timestamps. Publication time changes only after an
-uploaded generation; last-check time also advances for unchanged scans.
+generation, duration, timestamps, and a redacted component/error code. It is
+atomically rewritten and capped at 200 entries. Publication time changes only
+after an uploaded generation; last-check time also advances for unchanged
+scans.
 
 ## Private import and store
 

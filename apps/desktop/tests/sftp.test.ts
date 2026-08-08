@@ -13,11 +13,11 @@ class FakeSftp implements SftpRunner {
 describe("bounded SFTP staging", () => {
   it("uses app host-key options and remote temp rename/chmod", async () => {
     const runner = new FakeSftp();
-    const adapter = new OpenSftpAdapter(runner, "/private/app/known_hosts");
+    const adapter = new OpenSftpAdapter(runner, "/private/Application Support/known_hosts");
     const uploader = adapter.withTarget({ host: "server.example.invalid", user: "deploy", port: 22 });
     await uploader.ensureDirectory("/home/deploy/.vault-bridge");
     await uploader.upload("/private/app/staging/file", "/home/deploy/.vault-bridge/secret");
-    expect(runner.batches[0]).toContain("UserKnownHostsFile=/private/app/known_hosts");
+    expect(runner.batches[0]).toContain('UserKnownHostsFile="/private/Application Support/known_hosts"');
     expect(runner.batches[1]).toContain("chmod 600");
     expect(runner.batches[1]).toContain("rename");
     expect(runner.batches[1]).not.toContain("sh -c");

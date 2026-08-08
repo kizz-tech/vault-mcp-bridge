@@ -16,6 +16,7 @@ const api: VaultBridgeRendererApi = Object.freeze({
   synchronize: () => invoke<DesktopState>("sync:now"),
   setPaused: (paused: boolean) => invoke<DesktopState>("sync:set-paused", paused),
   getJournal: () => invoke<JournalEntry[]>("journal:list"),
+  getStartAtLogin: () => invoke<boolean>("settings:get-start-at-login"),
   setStartAtLogin: (enabled: boolean) => invoke<void>("settings:set-start-at-login", enabled),
   connectChatGpt: () => invoke<DesktopState>("chatgpt:connect"),
   connectOwner: () => invoke<DesktopState>("owner:connect"),

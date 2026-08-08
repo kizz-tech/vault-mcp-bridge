@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { isAbsolute, dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import type { Writable } from "node:stream";
 import {
   DefaultVaultScanner,
   buildSnapshot,
@@ -35,6 +36,7 @@ export type PrivateSyncConfig = {
   sshUser?: string;
   sshPort?: number;
   sshKnownHostsFile?: string;
+  sshHostKeyAlias?: string;
   sshHostKeyAlgorithm?: "ssh-ed25519" | "ecdsa-sha2-nistp256" | "ssh-rsa";
   remoteDirectory: string;
   projectName: string;
@@ -139,6 +141,11 @@ export const validatePrivateSyncConfig = (value: unknown): PrivateSyncConfig => 
     : typeof candidate.sshKnownHostsFile === "string" && isAbsolute(candidate.sshKnownHostsFile) && resolve(candidate.sshKnownHostsFile) === candidate.sshKnownHostsFile
       ? candidate.sshKnownHostsFile
       : "";
+  const sshHostKeyAlias = candidate.sshHostKeyAlias === undefined
+    ? undefined
+    : typeof candidate.sshHostKeyAlias === "string" && SSH_HOST_RE.test(candidate.sshHostKeyAlias)
+      ? candidate.sshHostKeyAlias
+      : "";
   const sshHostKeyAlgorithm = candidate.sshHostKeyAlgorithm === undefined
     ? undefined
     : ["ssh-ed25519", "ecdsa-sha2-nistp256", "ssh-rsa"].includes(String(candidate.sshHostKeyAlgorithm))
@@ -156,8 +163,10 @@ export const validatePrivateSyncConfig = (value: unknown): PrivateSyncConfig => 
     sshUser === "" ||
     (sshPort !== undefined && (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65_535)) ||
     sshKnownHostsFile === "" ||
+    sshHostKeyAlias === "" ||
     sshHostKeyAlgorithm === "" ||
     (sshKnownHostsFile !== undefined && sshHostKeyAlgorithm === undefined) ||
+    (sshHostKeyAlias !== undefined && sshKnownHostsFile === undefined) ||
     ((sshUser !== undefined || sshPort !== undefined) && sshKnownHostsFile === undefined) ||
     !remoteDirectory ||
     !projectName
@@ -171,6 +180,7 @@ export const validatePrivateSyncConfig = (value: unknown): PrivateSyncConfig => 
     ...(sshUser ? { sshUser } : {}),
     ...(sshPort !== undefined ? { sshPort } : {}),
     ...(sshKnownHostsFile ? { sshKnownHostsFile } : {}),
+    ...(sshHostKeyAlias ? { sshHostKeyAlias } : {}),
     ...(sshHostKeyAlgorithm ? { sshHostKeyAlgorithm } : {}),
     remoteDirectory,
     projectName,
@@ -224,6 +234,19 @@ const changesBetween = (before: readonly ProjectionEntry[], after: readonly Proj
 
 const commandArgument = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
+export const userKnownHostsFileOption = (path: string): string => {
+  if (!isAbsolute(path) || /[\0\r\n]/u.test(path)) throw new Error("private sync known_hosts path is invalid");
+  const quoted = path.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+  return `UserKnownHostsFile="${quoted}"`;
+};
+
+export const hostKeyAliasOption = (host: string, port: number): string => {
+  if (!SSH_HOST_RE.test(host) || !Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("private sync host-key alias is invalid");
+  }
+  return `HostKeyAlias=${port === 22 ? host : `[${host}]:${port}`}`;
+};
+
 export const buildPrivateImportCommand = (config: PrivateSyncConfig): string => {
   const validated = validatePrivateSyncConfig(config);
   return [
@@ -251,6 +274,22 @@ const collectBounded = (stream: NodeJS.ReadableStream, maximumBytes: number): Pr
   stream.on("error", reject);
 });
 
+export const writeSnapshotInput = (input: Writable, snapshotJson: string): Promise<Error | undefined> => new Promise((resolveValue) => {
+  let settled = false;
+  const finish = (error?: unknown): void => {
+    if (settled) return;
+    settled = true;
+    resolveValue(error === undefined ? undefined : error instanceof Error ? error : new Error(String(error)));
+  };
+  input.once("error", finish);
+  input.once("finish", () => finish());
+  try {
+    input.end(snapshotJson, "utf8");
+  } catch (error) {
+    finish(error);
+  }
+});
+
 export const uploadSnapshotOverSsh: SnapshotUploader = async ({ config, snapshotJson }) => {
   const validated = validatePrivateSyncConfig(config);
   const destination = validated.sshUser ? `${validated.sshUser}@${validated.sshHost}` : validated.sshHost;
@@ -262,7 +301,10 @@ export const uploadSnapshotOverSsh: SnapshotUploader = async ({ config, snapshot
     "-o", "ClearAllForwardings=yes",
     "-o", "RequestTTY=no",
     ...(validated.sshKnownHostsFile
-      ? ["-o", "StrictHostKeyChecking=yes", "-o", `UserKnownHostsFile=${validated.sshKnownHostsFile}`]
+      ? ["-o", "StrictHostKeyChecking=yes", "-o", userKnownHostsFileOption(validated.sshKnownHostsFile)]
+      : []),
+    ...(validated.sshHostKeyAlias
+      ? ["-o", hostKeyAliasOption(validated.sshHostKeyAlias, validated.sshPort ?? 22)]
       : []),
     ...(validated.sshHostKeyAlgorithm
       ? ["-o", `HostKeyAlgorithms=${privateHostKeyAlgorithms(validated.sshHostKeyAlgorithm)}`]
@@ -274,15 +316,22 @@ export const uploadSnapshotOverSsh: SnapshotUploader = async ({ config, snapshot
   const child = spawn("/usr/bin/ssh", sshArguments, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   const stdout = collectBounded(child.stdout, 64 * 1024);
   const stderr = collectBounded(child.stderr, 128 * 1024);
+  const input = writeSnapshotInput(child.stdin, snapshotJson);
+  const output = Promise.all([stdout, stderr, input]).then(
+    ([out, err, inputError]) => ({ ok: true as const, out, err, inputError }),
+    (error: unknown) => ({ ok: false as const, error })
+  );
   const timeout = setTimeout(() => child.kill("SIGTERM"), 120_000);
-  child.stdin.end(snapshotJson, "utf8");
   const exitCode = await new Promise<number | null>((resolveValue, reject) => {
     child.once("error", reject);
     child.once("close", resolveValue);
   }).finally(() => clearTimeout(timeout));
-  const [out, err] = await Promise.all([stdout, stderr]);
-  if (exitCode !== 0) throw new Error(`private sync SSH import failed: ${safeErrorMessage(err || `exit ${String(exitCode)}`)}`);
-  const lines = out.trim().split(/\r?\n/u).filter(Boolean);
+  const collected = await output;
+  if (!collected.ok) throw collected.error;
+  if (exitCode !== 0 || collected.inputError) {
+    throw new Error(`private sync SSH import failed: ${safeErrorMessage(collected.err || collected.inputError || `exit ${String(exitCode)}`)}`);
+  }
+  const lines = collected.out.trim().split(/\r?\n/u).filter(Boolean);
   if (lines.length !== 1) throw new Error("private sync receipt is invalid");
   try {
     return JSON.parse(lines[0]!) as unknown;

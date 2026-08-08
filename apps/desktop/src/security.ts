@@ -10,6 +10,7 @@ export const IPC_CHANNELS = Object.freeze([
   "sync:now",
   "sync:set-paused",
   "journal:list",
+  "settings:get-start-at-login",
   "settings:set-start-at-login",
   "chatgpt:connect",
   "owner:connect",

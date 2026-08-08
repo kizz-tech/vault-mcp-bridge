@@ -26,6 +26,8 @@ download. The supported preview path is the Codex installation runbook.
 - exposes only `search` and `fetch` to ChatGPT;
 - shows connection state, synchronization state, and an aggregate activity
   log in one desktop application.
+- provides one redacted `doctor --json` check for the vault, SSH/runtime,
+  OpenAI tunnel, and last synchronization result.
 
 The application does not write to the vault. It does not expose iCloud, a local
 filesystem, the Docker socket, a shell, or a public server port.
@@ -86,9 +88,13 @@ does not publish Vault Bridge to the public ChatGPT app catalog.
 - The OpenAI runtime key is accepted through the native UI or stdin and stored
   with macOS encrypted storage. It is not accepted in setup JSON or process
   arguments.
-- Activity records counts, bytes, duration, trigger, and generation. It does
+- Activity records counts, bytes, duration, trigger, generation, and a bounded
+  component/error code when an operation fails. It does
   not record note contents, titles, queries, credentials, addresses, or local
   paths.
+- The local journal retains at most 200 events. Container logs rotate at
+  8 MiB × 3 files, and temporary deployment secrets are removed after every
+  setup attempt.
 - The VPS administrator and Docker daemon can inspect the replica. Use a
   server you trust.
 

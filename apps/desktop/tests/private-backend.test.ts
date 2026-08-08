@@ -32,11 +32,16 @@ describe("private secure-tunnel desktop backend", () => {
       setup: vi.fn(async (input) => ({
         projectName: input.projectName,
         remoteDirectory: `/home/operator/.local/share/vault-bridge/installations/${input.installationId}`,
+        sshHost: "203.0.113.8",
+        sshUser: "operator",
+        sshPort: 22,
         sshHostKeyAlgorithm: "ssh-ed25519" as const
       })),
       disconnect: vi.fn(async () => undefined),
-      remove: vi.fn(async () => undefined)
+      remove: vi.fn(async () => undefined),
+      health: vi.fn(async () => ({ ssh: true as const, runtime: true }))
     };
+    let syncFailure = false;
     const backend = new PrivateDesktopBackend({
       appDataPath,
       config: { image: `ghcr.io/example/vault-bridge@sha256:${"a".repeat(64)}`, syncIntervalMinutes: 5 },
@@ -59,13 +64,16 @@ describe("private secure-tunnel desktop backend", () => {
       },
       deployment,
       tunnelVerifier: async () => undefined,
-      syncer: async () => ({
-        status: "uploaded",
-        generation: 1,
-        documentCount: 1,
-        changes: { added: 1, modified: 0, removed: 0, unchanged: 0, total: 1, bytes: content.length },
-        digest: "digest_synthetic_0001"
-      }),
+      syncer: async () => {
+        if (syncFailure) throw new Error("Permission denied (publickey)");
+        return {
+          status: "uploaded" as const,
+          generation: 1,
+          documentCount: 1,
+          changes: { added: 1, modified: 0, removed: 0, unchanged: 0, total: 1, bytes: content.length },
+          digest: "digest_synthetic_0001"
+        };
+      },
       now: () => new Date("2026-08-08T00:00:00.000Z")
     });
 
@@ -88,6 +96,31 @@ describe("private secure-tunnel desktop backend", () => {
     ]));
     expect(deployment.setup).toHaveBeenCalledOnce();
     expect(await readFile(join(appDataPath, "private-setup.json"), "utf8")).not.toContain("TEST_RUNTIME_API_KEY");
+    const syncConfig = JSON.parse(await readFile(join(appDataPath, "private-sync", "config.json"), "utf8")) as Record<string, unknown>;
+    expect(syncConfig).toMatchObject({
+      sshHost: "server.example.invalid",
+      sshHostKeyAlias: "203.0.113.8",
+      sshHostKeyAlgorithm: "ssh-ed25519"
+    });
+    expect(await backend.diagnose()).toMatchObject({
+      ok: true,
+      checks: {
+        configuration: { status: "pass" },
+        vault: { status: "pass" },
+        server: { status: "pass" },
+        openai: { status: "pass" },
+        synchronization: { status: "pass" }
+      }
+    });
+
+    syncFailure = true;
+    const failed = await backend.synchronize();
+    expect(failed).toMatchObject({ mode: "attention", attention: { code: "sync-blocked", message: "SSH authentication failed" } });
+    expect((await backend.getJournal()).at(-1)).toMatchObject({
+      level: "error",
+      diagnostic: { code: "ssh_auth_failed", component: "ssh", retryable: false }
+    });
+    syncFailure = false;
 
     const retained = await backend.disconnect();
     expect(retained.serverCopy).toBe("retained");

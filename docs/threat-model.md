@@ -69,7 +69,7 @@ Remote copies never outrank the local vault and are never synchronized back.
 | Public internet probing | no host ports; outbound Secure Tunnel control plane | OpenAI account/workspace authorization remains external |
 | Container escape/noisy neighbor | non-root, read-only root, dropped caps, no-new-privileges, no Docker socket/binds, resource/log/storage limits | shared kernel/daemon is trusted |
 | Cross-project deletion | opaque deterministic project, exact directory/volume names, validated lifecycle commands, explicit removal confirmation | out-of-band root actions are uncontrolled |
-| Sensitive diagnostics | bounded persistent redacted Activity journal; only aggregate diffs, no raw stdout/stderr, paths, keys, queries, titles, or note text | local crash/core dumps need OS protection |
+| Sensitive diagnostics | 200-entry redacted Activity journal and live doctor checks; only aggregate diffs and bounded component/error codes, no raw stdout/stderr, paths, keys, queries, titles, or note text | local crash/core dumps need OS protection |
 | iCloud freshness overclaim | UI reports last Mac scan/publication only | phone-to-Mac delivery is outside Vault Bridge |
 | Denial of service or bill impact | no public host port, bounded tool inputs/results, container resource limits | OpenAI/VPS/account quotas remain external |
 
@@ -82,7 +82,8 @@ boolean renderer projection.
 
 During deployment the source key is staged privately and uploaded with mode
 `0600`. A network-disabled init job copies it into a named volume owned by UID
-10001 with mode `0400`. The runtime mounts that volume read-only. Disconnect
+10001 with mode `0400`. The local staging directory is removed after every
+setup attempt. The runtime mounts that volume read-only. Disconnect
 stops the runtime, removes the remote source file, and removes the runtime
 secret volume while retaining replica data. Reconnect recreates the secret
 from the locally encrypted value.

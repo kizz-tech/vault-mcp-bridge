@@ -96,8 +96,8 @@ check every configured interval while the app is running. The overview shows
 last check, last actual publication, and next scheduled check separately.
 Activity is a full application view, not a modal. Sync entries show safe
 aggregate added/modified/removed/unchanged counts, generation, current bytes,
-duration, and trigger. They never expose note titles, paths, content, or raw
-queries.
+duration, and trigger. Failed entries identify only the bounded component and
+error class. They never expose note titles, paths, content, or raw queries.
 
 ## Agent-first setup
 
@@ -109,7 +109,9 @@ and its `vault-bridge` command, then uses a two-phase configuration:
 2. after exact owner approval, `setup` pins that fingerprint and performs the
    existing bounded deployment.
 
-`doctor`, `status`, and `journal` return predictable redacted JSON. There is no
+`doctor` performs live read-only checks of the configured vault, pinned SSH
+runtime, OpenAI tunnel, and latest synchronization. `doctor`, `status`, and
+`journal` return predictable redacted JSON. There is no
 agent command for arbitrary shell, server commands, file reads, deletion, or
 vault writes.
 

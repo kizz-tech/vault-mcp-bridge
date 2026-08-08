@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { HostKeyChangedError, MemoryHostKeyPinStore, OpenSshAdapter, fingerprintFromKeyscanLine, normalizeFingerprint, openSshHostKeyAlgorithms, type CommandResult, type CommandRunner, type KnownHostsWriter, type SshTarget } from "../src/ssh.js";
+import { HostKeyChangedError, MemoryHostKeyPinStore, OpenSshAdapter, fingerprintFromKeyscanLine, normalizeFingerprint, openSshHostKeyAlgorithms, userKnownHostsFileOption, type CommandResult, type CommandRunner, type KnownHostsWriter, type SshTarget } from "../src/ssh.js";
 
 class FakeRunner implements CommandRunner {
   calls: Array<{ command: string; args: readonly string[] }> = [];
@@ -33,6 +33,11 @@ describe("OpenSSH adapter", () => {
     expect(runner.calls[1]?.args).toContain("RequestTTY=no");
     expect(runner.calls[1]?.args).toContain("ConnectTimeout=15");
     expect(runner.calls[1]?.args.at(-1)).toBe("true");
+  });
+
+  it("quotes an app-private known_hosts path containing spaces", () => {
+    expect(userKnownHostsFileOption("/Users/example/Library/Application Support/Vault Bridge/known_hosts"))
+      .toBe('UserKnownHostsFile="/Users/example/Library/Application Support/Vault Bridge/known_hosts"');
   });
 
   it("rejects option injection in targets and remote commands", async () => {

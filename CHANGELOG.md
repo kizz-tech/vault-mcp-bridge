@@ -13,6 +13,13 @@ semantic versioning while the public product contract is still evolving.
 - Reworked Activity into a time-oriented operational log instead of a card and
   chip dashboard.
 - Simplified settings, application icon, and project README.
+- Fixed strict SSH synchronization for macOS application-data paths and SSH
+  aliases, and converted early pipe closure into a handled sync failure.
+- Added live redacted diagnostics for the vault, pinned SSH/runtime, OpenAI
+  tunnel, and last sync; failed Activity entries now identify the failing
+  component without retaining private output.
+- Removed temporary deployment secrets after every setup attempt and made the
+  start-at-login control reflect the real macOS setting.
 
 ### Distribution status
 

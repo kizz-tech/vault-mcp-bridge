@@ -225,6 +225,10 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions = {}): Deskt
       assertSender(event);
       return currentBackend().getJournal();
     });
+    ipcMain.handle("settings:get-start-at-login", async (event) => {
+      assertSender(event);
+      return app.getLoginItemSettings().openAtLogin;
+    });
     ipcMain.handle("settings:set-start-at-login", async (event, payload: unknown) => {
       assertSender(event);
       if (typeof payload !== "boolean") throw safeIpcError(new TypeError("Invalid login setting"));
@@ -317,6 +321,7 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions = {}): Deskt
       "sync:now",
       "sync:set-paused",
       "journal:list",
+      "settings:get-start-at-login",
       "settings:set-start-at-login",
       "chatgpt:connect",
       "owner:connect",
@@ -442,12 +447,33 @@ async function runAgentMode(arguments_: readonly string[]): Promise<number> {
   if (command.name === "doctor") {
     const checks = {
       platform: process.platform === "darwin",
-      encryptedStorageProvider: process.platform === "darwin" ? "macos-safe-storage" : null,
+      encryptedStorage: safeStorage.isEncryptionAvailable(),
       ssh: await access("/usr/bin/ssh").then(() => true, () => false),
-      packaged: app.isPackaged
+      packaged: app.isPackaged,
+      startAtLogin: app.getLoginItemSettings().openAtLogin
     };
-    const ok = checks.platform && Boolean(checks.encryptedStorageProvider) && checks.ssh;
-    writeAgentJson({ ok, appVersion: app.getVersion(), checks });
+    let installation: Awaited<ReturnType<PrivateDesktopBackend["diagnose"]>> | null = null;
+    let backendAvailable = true;
+    if (checks.platform && checks.encryptedStorage && checks.ssh) {
+      try {
+        const bundle = await createDefaultBackend({ confirmation: { confirm: async () => false } });
+        if (bundle.kind === "private" && bundle.privateBackend) {
+          await bundle.privateBackend.initialize({ backgroundSync: false, refreshVault: false });
+          try {
+            installation = await bundle.privateBackend.diagnose();
+          } finally {
+            bundle.privateBackend.close();
+          }
+        }
+      } catch {
+        backendAvailable = false;
+        installation = null;
+      }
+    }
+    const configured = installation?.checks.configuration.status === "pass";
+    const ready = configured ? Boolean(installation?.ok) : false;
+    const ok = checks.platform && checks.encryptedStorage && checks.ssh && backendAvailable && (!configured || ready);
+    writeAgentJson({ ok, ready, appVersion: app.getVersion(), checks: { ...checks, installation } });
     return ok ? 0 : 1;
   }
 
@@ -530,6 +556,9 @@ const agentArguments = process.env.VAULT_BRIDGE_AGENT_MODE === "1"
     ? process.argv.slice(agentArgumentIndex + 1)
     : undefined;
 if (agentArguments) {
+  process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+    app.exit(error.code === "EPIPE" ? 0 : 1);
+  });
   void runAgentMode(agentArguments).then(
     (code) => app.exit(code),
     (error: unknown) => {
@@ -550,7 +579,10 @@ if (agentArguments) {
         window.focus();
       }
     });
-    void runtime.start();
+    void runtime.start().catch(() => {
+      dialog.showErrorBox("Vault Bridge could not start", "Run `vault-bridge doctor --json` for a safe diagnostic report.");
+      app.quit();
+    });
   }
 } else if (process.env.VAULT_BRIDGE_SMOKE_MAIN === "1") {
   void app.whenReady().then(

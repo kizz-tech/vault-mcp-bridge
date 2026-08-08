@@ -73,6 +73,22 @@ export interface SyncChanges {
 
 export type SyncTrigger = "startup" | "scheduled" | "manual" | "resume" | "setup";
 
+export type DiagnosticCode =
+  | "vault_unavailable"
+  | "ssh_trust_failed"
+  | "ssh_auth_failed"
+  | "server_unreachable"
+  | "runtime_unavailable"
+  | "openai_tunnel_unavailable"
+  | "snapshot_rejected"
+  | "sync_failed";
+
+export interface DiagnosticInfo {
+  code: DiagnosticCode;
+  component: "vault" | "ssh" | "runtime" | "openai" | "sync";
+  retryable: boolean;
+}
+
 export interface SyncSummary {
   intervalMinutes: number;
   lastCheckedAt: string | null;
@@ -107,6 +123,7 @@ export interface JournalEntry {
   changes?: SyncChanges;
   generation?: number;
   durationMs?: number;
+  diagnostic?: DiagnosticInfo;
 }
 
 export interface DesktopBackend {
@@ -138,6 +155,7 @@ export interface VaultBridgeRendererApi {
   synchronize(): Promise<DesktopState>;
   setPaused(paused: boolean): Promise<DesktopState>;
   getJournal(): Promise<JournalEntry[]>;
+  getStartAtLogin(): Promise<boolean>;
   setStartAtLogin(enabled: boolean): Promise<void>;
   connectChatGpt(): Promise<DesktopState>;
   connectOwner(): Promise<DesktopState>;

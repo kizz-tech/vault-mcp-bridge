@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
   <title id="title">Vault Bridge</title>
   <desc id="description">Two endpoints joined by a single link.</desc>
-  <rect width="1024" height="1024" rx="208" fill="#1b1c1a"/>
-  <path d="M272 272h112v480H272zM640 272h112v480H640z" fill="#f2f2ee"/>
-  <path d="M384 456h256v112H384z" fill="#7ab18e"/>
+  <rect width="1024" height="1024" rx="208" fill="#1c2024"/>
+  <path d="M272 272h112v480H272zM640 272h112v480H640z" fill="#edeef0"/>
+  <path d="M384 456h256v112H384z" fill="#3e63dd"/>
 </svg>

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, mkdir, open, readFile, realpath, rename } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { DefaultVaultScanner, type VaultScanner } from "@vault-mcp-bridge/agent-core";
@@ -20,6 +20,7 @@ import {
   cloneState,
   displayServerLabel,
   type AttentionState,
+  type DiagnosticInfo,
   type DesktopBackend,
   type DesktopState,
   type JournalEntry,
@@ -37,6 +38,8 @@ const TUNNEL_ID_RE = /^tunnel_[a-f0-9]{32}$/u;
 const OPAQUE_ID_RE = /^[A-Za-z0-9_-]{16,256}$/u;
 const IMAGE_RE = /^[a-z0-9][a-z0-9./_-]{0,255}(?:@sha256:[a-f0-9]{64}|:[A-Za-z0-9._-]{1,128})$/u;
 const SAFE_REMOTE_HOME_RE = /^\/(?:[A-Za-z0-9._-]+\/?){1,20}$/u;
+const SSH_HOST_RE = /^[A-Za-z0-9._-]{1,255}$/u;
+const SSH_USER_RE = /^[A-Za-z0-9._-]{1,253}$/u;
 const MIN_REMOTE_FREE_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_JOURNAL = 200;
 
@@ -55,12 +58,18 @@ type PrivateRecord = {
   lastCheckedAt?: string;
   lastSyncResult?: "published" | "unchanged" | "failed";
   lastSyncChanges?: SyncChanges;
+  sshHost?: string;
+  sshUser?: string;
+  sshPort?: number;
   sshHostKeyAlgorithm?: SshHostKeyAlgorithm;
 };
 
 export interface PrivateInstallation {
   readonly projectName: string;
   readonly remoteDirectory: string;
+  readonly sshHost?: string;
+  readonly sshUser?: string;
+  readonly sshPort?: number;
   readonly sshHostKeyAlgorithm?: SshHostKeyAlgorithm;
 }
 
@@ -75,7 +84,25 @@ export interface PrivateDeploymentPort {
   }): Promise<PrivateInstallation>;
   disconnect(input: PrivateInstallation & { readonly server: ServerInput }): Promise<void>;
   remove(input: PrivateInstallation & { readonly server: ServerInput }): Promise<void>;
+  health?(input: PrivateInstallation & { readonly server: ServerInput }): Promise<{ ssh: true; runtime: boolean }>;
 }
+
+export type PrivateHealthCheck = {
+  status: "pass" | "fail" | "skip";
+  diagnostic?: DiagnosticInfo;
+};
+
+export type PrivateHealthReport = {
+  ok: boolean;
+  checkedAt: string;
+  checks: {
+    configuration: PrivateHealthCheck;
+    vault: PrivateHealthCheck;
+    server: PrivateHealthCheck;
+    openai: PrivateHealthCheck;
+    synchronization: PrivateHealthCheck;
+  };
+};
 
 export interface PrivateDesktopBackendOptions {
   readonly appDataPath: string;
@@ -124,10 +151,17 @@ export class PrivateDesktopBackend implements DesktopBackend {
   async initialize(options: { backgroundSync?: boolean; refreshVault?: boolean } = {}): Promise<DesktopState> {
     this.record = await readRecord(this.recordPath());
     this.journal.splice(0, this.journal.length, ...(await readJournal(this.journalPath())));
-    if (options.refreshVault !== false && this.record.phase === "ready" && !this.record.sshHostKeyAlgorithm) {
-      const algorithm = await readKnownHostAlgorithm(join(this.options.appDataPath, "ssh", "known_hosts"));
-      if (algorithm) {
-        this.record = { ...this.record, sshHostKeyAlgorithm: algorithm };
+    if (this.record.phase === "ready" && (!this.record.sshHost || !this.record.sshHostKeyAlgorithm)) {
+      const knownHost = await readKnownHostRecord(join(this.options.appDataPath, "ssh", "known_hosts"));
+      if (knownHost) {
+        const sshUser = this.record.sshUser ?? this.record.server?.user;
+        this.record = {
+          ...this.record,
+          sshHost: this.record.sshHost ?? knownHost.host,
+          sshPort: this.record.sshPort ?? knownHost.port,
+          sshHostKeyAlgorithm: this.record.sshHostKeyAlgorithm ?? knownHost.algorithm,
+          ...(sshUser ? { sshUser } : {})
+        };
         await this.persist();
       }
     }
@@ -227,6 +261,63 @@ export class PrivateDesktopBackend implements DesktopBackend {
   async getJournal(): Promise<JournalEntry[]> { return this.journal.map(cloneJournalEntry); }
   async setStartAtLogin(_enabled: boolean): Promise<void> {}
 
+  async diagnose(): Promise<PrivateHealthReport> {
+    const checkedAt = this.now().toISOString();
+    const configured = this.record.phase === "ready" && Boolean(
+      this.record.vault && this.record.server && this.record.tunnelId && this.installation() && this.record.deviceId
+    );
+    const checks: PrivateHealthReport["checks"] = {
+      configuration: { status: configured ? "pass" : "fail" },
+      vault: { status: "skip" },
+      server: { status: "skip" },
+      openai: { status: "skip" },
+      synchronization: { status: "skip" }
+    };
+    if (!configured || !this.record.vault || !this.record.server) return { ok: false, checkedAt, checks };
+
+    try {
+      const scan = await this.scanner.scan(this.record.vault.root, {});
+      checks.vault = scan.errors.length === 0
+        ? { status: "pass" }
+        : { status: "fail", diagnostic: diagnosticFor(new Error("vault scan incomplete")) };
+    } catch (error) {
+      checks.vault = { status: "fail", diagnostic: diagnosticFor(error, "vault") };
+    }
+
+    const installation = this.installation();
+    if (installation && this.deployment.health) {
+      try {
+        const health = await this.deployment.health({ ...installation, server: this.record.server });
+        checks.server = health.ssh && health.runtime
+          ? { status: "pass" }
+          : { status: "fail", diagnostic: diagnosticFor(new Error("runtime unavailable"), "runtime") };
+      } catch (error) {
+        checks.server = { status: "fail", diagnostic: diagnosticFor(error, "ssh") };
+      }
+    }
+
+    const apiKey = await this.secrets.get(RUNTIME_KEY_SECRET);
+    if (this.record.tunnelId && apiKey) {
+      try {
+        await (this.options.tunnelVerifier ?? verifyTunnel)(this.record.tunnelId, apiKey);
+        checks.openai = { status: "pass" };
+      } catch (error) {
+        checks.openai = { status: "fail", diagnostic: diagnosticFor(error, "openai") };
+      }
+    } else {
+      checks.openai = { status: "fail", diagnostic: diagnosticFor(new Error("tunnel unavailable"), "openai") };
+    }
+
+    checks.synchronization = this.record.lastSyncResult && this.record.lastSyncResult !== "failed"
+      ? { status: "pass" }
+      : { status: "fail", diagnostic: diagnosticFor(new Error("sync failed"), "sync") };
+    return {
+      ok: Object.values(checks).every((check) => check.status === "pass"),
+      checkedAt,
+      checks
+    };
+  }
+
   async connectChatGpt(): Promise<DesktopState> {
     if (this.record.phase !== "ready") return this.fail("tunnel-not-configured", "Finish setup first", "retry");
     await this.options.browser?.openExternal("https://chatgpt.com/");
@@ -304,6 +395,9 @@ export class PrivateDesktopBackend implements DesktopBackend {
         deviceId,
         projectName: installed.projectName,
         remoteDirectory: installed.remoteDirectory,
+        ...(installed.sshHost ? { sshHost: installed.sshHost } : {}),
+        ...(installed.sshUser ? { sshUser: installed.sshUser } : {}),
+        ...(installed.sshPort !== undefined ? { sshPort: installed.sshPort } : {}),
         ...(installed.sshHostKeyAlgorithm ? { sshHostKeyAlgorithm: installed.sshHostKeyAlgorithm } : {})
       };
       await this.writeSyncConfig();
@@ -350,7 +444,8 @@ export class PrivateDesktopBackend implements DesktopBackend {
       await this.appendSync(receipt, trigger, Date.now() - startedAt);
       await this.projectRecord();
       return cloneState(this.state);
-    } catch {
+    } catch (error) {
+      const diagnostic = diagnosticFor(error, "sync");
       this.record = { ...this.record, lastCheckedAt: this.now().toISOString(), lastSyncResult: "failed" };
       await this.persist();
       this.state = {
@@ -361,13 +456,14 @@ export class PrivateDesktopBackend implements DesktopBackend {
           lastResult: "failed"
         }
       };
-      await this.append("Synchronization failed", "error", {
+      await this.append(diagnosticMessage(diagnostic), "error", {
         category: "sync",
         result: "failed",
         trigger,
-        durationMs: Date.now() - startedAt
+        durationMs: Date.now() - startedAt,
+        diagnostic
       });
-      return this.fail("sync-blocked", "Synchronization failed", "retry", false);
+      return this.fail("sync-blocked", diagnosticMessage(diagnostic), "retry", false);
     }
   }
 
@@ -388,6 +484,9 @@ export class PrivateDesktopBackend implements DesktopBackend {
       sshUser: this.record.server.user,
       sshPort: this.record.server.port,
       sshKnownHostsFile: join(this.options.appDataPath, "ssh", "known_hosts"),
+      ...(installation.sshHost && installation.sshHost !== this.record.server.host
+        ? { sshHostKeyAlias: installation.sshHost }
+        : {}),
       ...(this.record.sshHostKeyAlgorithm ? { sshHostKeyAlgorithm: this.record.sshHostKeyAlgorithm } : {}),
       remoteDirectory: installation.remoteDirectory,
       projectName: installation.projectName,
@@ -428,7 +527,14 @@ export class PrivateDesktopBackend implements DesktopBackend {
 
   private installation(): PrivateInstallation | undefined {
     return this.record.projectName && this.record.remoteDirectory
-      ? { projectName: this.record.projectName, remoteDirectory: this.record.remoteDirectory }
+      ? {
+          projectName: this.record.projectName,
+          remoteDirectory: this.record.remoteDirectory,
+          ...(this.record.sshHost ? { sshHost: this.record.sshHost } : {}),
+          ...(this.record.sshUser ? { sshUser: this.record.sshUser } : {}),
+          ...(this.record.sshPort !== undefined ? { sshPort: this.record.sshPort } : {}),
+          ...(this.record.sshHostKeyAlgorithm ? { sshHostKeyAlgorithm: this.record.sshHostKeyAlgorithm } : {})
+        }
       : undefined;
   }
 
@@ -550,29 +656,40 @@ class SshPrivateDeployment implements PrivateDeploymentPort {
     const composePath = join(stage, "compose.yaml");
     const environmentPath = join(stage, ".env");
     const apiKeyPath = join(secretDirectory, "control-plane-api-key");
-    const compose = await readFile(this.options.composeTemplatePath, "utf8");
-    await atomicWriteText(composePath, compose);
-    await atomicWriteText(environmentPath, [
-      `COMPOSE_PROJECT_NAME=${input.projectName}`,
-      `VAULT_BRIDGE_IMAGE=${this.options.config.image}`,
-      `CONTROL_PLANE_TUNNEL_ID=${input.tunnelId}`,
-      `MCP_VAULT_ID=${input.vaultId}`,
-      ""
-    ].join("\n"));
-    await atomicWriteText(apiKeyPath, `${input.apiKey}\n`);
-    const uploader = this.options.sftp.withTarget(target);
-    await uploader.ensureDirectory(remoteSecrets);
-    await Promise.all([
-      uploader.upload(composePath, `${remoteDirectory}/compose.yaml`),
-      uploader.upload(environmentPath, `${remoteDirectory}/.env`),
-      uploader.upload(apiKeyPath, `${remoteSecrets}/control-plane-api-key`)
-    ]);
-    const prefix = composePrefix(input.projectName, remoteDirectory);
-    await this.options.ssh.runFixed(target, [...prefix, "config", "--quiet"]);
-    await this.options.ssh.runFixed(target, [...prefix, "pull", "--quiet"], { timeoutMs: 10 * 60_000 });
-    await this.options.ssh.runFixed(target, [...prefix, "up", "--detach", "--no-build"], { timeoutMs: 5 * 60_000 });
-    await this.waitHealthy(target, prefix);
-    return { projectName: input.projectName, remoteDirectory, ...(target.hostKeyAlgorithm ? { sshHostKeyAlgorithm: target.hostKeyAlgorithm } : {}) };
+    try {
+      const compose = await readFile(this.options.composeTemplatePath, "utf8");
+      await atomicWriteText(composePath, compose);
+      await atomicWriteText(environmentPath, [
+        `COMPOSE_PROJECT_NAME=${input.projectName}`,
+        `VAULT_BRIDGE_IMAGE=${this.options.config.image}`,
+        `CONTROL_PLANE_TUNNEL_ID=${input.tunnelId}`,
+        `MCP_VAULT_ID=${input.vaultId}`,
+        ""
+      ].join("\n"));
+      await atomicWriteText(apiKeyPath, `${input.apiKey}\n`);
+      const uploader = this.options.sftp.withTarget(target);
+      await uploader.ensureDirectory(remoteSecrets);
+      await Promise.all([
+        uploader.upload(composePath, `${remoteDirectory}/compose.yaml`),
+        uploader.upload(environmentPath, `${remoteDirectory}/.env`),
+        uploader.upload(apiKeyPath, `${remoteSecrets}/control-plane-api-key`)
+      ]);
+      const prefix = composePrefix(input.projectName, remoteDirectory);
+      await this.options.ssh.runFixed(target, [...prefix, "config", "--quiet"]);
+      await this.options.ssh.runFixed(target, [...prefix, "pull", "--quiet"], { timeoutMs: 10 * 60_000 });
+      await this.options.ssh.runFixed(target, [...prefix, "up", "--detach", "--no-build"], { timeoutMs: 5 * 60_000 });
+      await this.waitHealthy(target, prefix);
+      return {
+        projectName: input.projectName,
+        remoteDirectory,
+        sshHost: target.host,
+        sshUser: target.user,
+        sshPort: target.port,
+        ...(target.hostKeyAlgorithm ? { sshHostKeyAlgorithm: target.hostKeyAlgorithm } : {})
+      };
+    } finally {
+      await rm(stage, { recursive: true, force: true });
+    }
   }
 
   async disconnect(input: PrivateInstallation & { readonly server: ServerInput }): Promise<void> {
@@ -589,6 +706,16 @@ class SshPrivateDeployment implements PrivateDeploymentPort {
     const prefix = composePrefix(input.projectName, input.remoteDirectory);
     await this.options.ssh.runFixed(target, [...prefix, "down", "--volumes", "--remove-orphans"]);
     await this.options.ssh.runFixed(target, ["find", input.remoteDirectory, "-depth", "-delete"]);
+  }
+
+  async health(input: PrivateInstallation & { readonly server: ServerInput }): Promise<{ ssh: true; runtime: boolean }> {
+    const target = await this.target(input.server);
+    await this.options.ssh.check(target);
+    const result = await this.options.ssh.runFixed(target, [
+      ...composePrefix(input.projectName, input.remoteDirectory),
+      "ps", "--format", "json"
+    ]);
+    return { ssh: true, runtime: runtimeIsHealthy(result.stdout) };
   }
 
   private async target(server: ServerInput): Promise<SshTarget> {
@@ -711,14 +838,25 @@ async function readRecord(path: string): Promise<PrivateRecord> {
   if (record.sshHostKeyAlgorithm !== undefined && !isKnownHostAlgorithm(record.sshHostKeyAlgorithm)) {
     throw new Error("private_setup_state_invalid");
   }
+  if (record.sshHost !== undefined && !SSH_HOST_RE.test(record.sshHost)) throw new Error("private_setup_state_invalid");
+  if (record.sshUser !== undefined && !SSH_USER_RE.test(record.sshUser)) throw new Error("private_setup_state_invalid");
+  if (record.sshPort !== undefined && (!Number.isInteger(record.sshPort) || record.sshPort < 1 || record.sshPort > 65_535)) {
+    throw new Error("private_setup_state_invalid");
+  }
   return record;
 }
 
-async function readKnownHostAlgorithm(path: string): Promise<SshHostKeyAlgorithm | undefined> {
+async function readKnownHostRecord(path: string): Promise<{ host: string; port: number; algorithm: SshHostKeyAlgorithm } | undefined> {
   try {
     for (const line of (await readFile(path, "utf8")).split(/\r?\n/u)) {
-      const algorithm = line.trim().split(/\s+/u)[1];
-      if (isKnownHostAlgorithm(algorithm)) return algorithm;
+      const [hostField, algorithm] = line.trim().split(/\s+/u);
+      if (!hostField || !isKnownHostAlgorithm(algorithm)) continue;
+      const bracketed = hostField.match(/^\[([A-Za-z0-9._-]{1,255})\]:(\d{1,5})$/u);
+      const host = bracketed?.[1] ?? hostField;
+      const port = bracketed ? Number(bracketed[2]) : 22;
+      if (SSH_HOST_RE.test(host) && Number.isInteger(port) && port >= 1 && port <= 65_535) {
+        return { host, port, algorithm };
+      }
     }
     return undefined;
   } catch (error) {
@@ -729,6 +867,62 @@ async function readKnownHostAlgorithm(path: string): Promise<SshHostKeyAlgorithm
 
 function isKnownHostAlgorithm(value: unknown): value is SshHostKeyAlgorithm {
   return value === "ssh-ed25519" || value === "ecdsa-sha2-nistp256" || value === "ssh-rsa";
+}
+
+export function diagnosticFor(error: unknown, fallback: DiagnosticInfo["component"] = "sync"): DiagnosticInfo {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (/host key|known_hosts|fingerprint|server identity/u.test(message)) {
+    return { code: "ssh_trust_failed", component: "ssh", retryable: false };
+  }
+  if (/permission denied|authentication|publickey/u.test(message)) {
+    return { code: "ssh_auth_failed", component: "ssh", retryable: false };
+  }
+  if (/connection (?:refused|timed out)|no route|could not resolve|network is unreachable|server offline/u.test(message)) {
+    return { code: "server_unreachable", component: "ssh", retryable: true };
+  }
+  if (fallback === "openai" || /tunnel|api key/u.test(message)) {
+    return { code: "openai_tunnel_unavailable", component: "openai", retryable: true };
+  }
+  if (fallback === "runtime" || /docker|compose|runtime unavailable|service.*running/u.test(message)) {
+    return { code: "runtime_unavailable", component: "runtime", retryable: true };
+  }
+  if (fallback === "vault" || /vault|scan/u.test(message)) {
+    return { code: "vault_unavailable", component: "vault", retryable: true };
+  }
+  if (/receipt|snapshot|private-import|import failed|rejected/u.test(message)) {
+    return { code: "snapshot_rejected", component: "runtime", retryable: true };
+  }
+  return { code: "sync_failed", component: fallback, retryable: true };
+}
+
+function diagnosticMessage(diagnostic: DiagnosticInfo): string {
+  switch (diagnostic.code) {
+    case "vault_unavailable": return "Vault scan failed";
+    case "ssh_trust_failed": return "SSH trust failed";
+    case "ssh_auth_failed": return "SSH authentication failed";
+    case "server_unreachable": return "Server unavailable";
+    case "runtime_unavailable": return "Server runtime unavailable";
+    case "openai_tunnel_unavailable": return "OpenAI tunnel unavailable";
+    case "snapshot_rejected": return "Snapshot import failed";
+    default: return "Synchronization failed";
+  }
+}
+
+function isDiagnosticInfo(value: unknown): value is DiagnosticInfo {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const diagnostic = value as Record<string, unknown>;
+  return [
+    "vault_unavailable",
+    "ssh_trust_failed",
+    "ssh_auth_failed",
+    "server_unreachable",
+    "runtime_unavailable",
+    "openai_tunnel_unavailable",
+    "snapshot_rejected",
+    "sync_failed"
+  ].includes(String(diagnostic.code)) &&
+    ["vault", "ssh", "runtime", "openai", "sync"].includes(String(diagnostic.component)) &&
+    typeof diagnostic.retryable === "boolean";
 }
 
 async function readJournal(path: string): Promise<JournalEntry[]> {
@@ -751,7 +945,8 @@ async function readJournal(path: string): Promise<JournalEntry[]> {
       typeof candidate.at !== "string" || !Number.isFinite(new Date(candidate.at).getTime()) ||
       typeof candidate.message !== "string" || candidate.message.length > 160 ||
       !["info", "warn", "error"].includes(candidate.level) ||
-      (candidate.changes !== undefined && !isSyncChanges(candidate.changes))
+      (candidate.changes !== undefined && !isSyncChanges(candidate.changes)) ||
+      (candidate.diagnostic !== undefined && !isDiagnosticInfo(candidate.diagnostic))
     ) throw new Error("private_journal_invalid");
     return cloneJournalEntry(candidate);
   });
@@ -766,5 +961,9 @@ function isSyncChanges(value: unknown): value is SyncChanges {
 }
 
 function cloneJournalEntry(entry: JournalEntry): JournalEntry {
-  return { ...entry, ...(entry.changes ? { changes: { ...entry.changes } } : {}) };
+  return {
+    ...entry,
+    ...(entry.changes ? { changes: { ...entry.changes } } : {}),
+    ...(entry.diagnostic ? { diagnostic: { ...entry.diagnostic } } : {})
+  };
 }

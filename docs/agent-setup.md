@@ -83,8 +83,9 @@ run. From a directory outside the repository, verify:
 "$HOME/.local/bin/vault-bridge" status --json
 ```
 
-Do not continue unless `doctor` reports macOS, the macOS encrypted-storage
-provider, and SSH as available. Actual Keychain access is exercised only when
+Do not continue unless `doctor` reports `ok: true` for macOS, encrypted
+storage, and SSH. `ready: false` is expected before the first setup. Actual
+Keychain access is exercised only when
 the runtime key is saved; handle that expected OS prompt as owner consent and
 never bypass it.
 
@@ -184,9 +185,13 @@ Do not test with sensitive queries in logs or the completion receipt.
 Run:
 
 ```sh
+"$HOME/.local/bin/vault-bridge" doctor --json
 "$HOME/.local/bin/vault-bridge" status --json
 "$HOME/.local/bin/vault-bridge" journal --json
 ```
+
+Do not claim the installation is operational unless `doctor` reports both
+`ok: true` and `ready: true`.
 
 Open the app and verify:
 

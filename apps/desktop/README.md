@@ -28,6 +28,12 @@ and `setup` flow keeps the runtime key on stdin and requires an exact approved
 SSH fingerprint. See `docs/agent-setup.md`; this surface intentionally has no
 delete, arbitrary shell/path, or vault-write command.
 
+Before setup, `doctor --json` validates the local prerequisites and reports
+`ready: false`. After setup, the same command performs live, read-only checks
+of the vault scan, pinned SSH connection, exact Docker project, OpenAI tunnel,
+and most recent synchronization; `ok: true` and `ready: true` mean every layer
+passed. Diagnostic output contains only status and bounded error codes.
+
 Development accepts `VAULT_BRIDGE_SECURE_TUNNEL_IMAGE` with an explicit local
 tag. Packaged production builds require a digest-pinned
 `secure-tunnel-config.json` supplied through

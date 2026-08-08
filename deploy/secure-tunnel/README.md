@@ -24,3 +24,8 @@ docker compose exec -T runtime node dist/cli.js private-import \
 The server activates a complete generation atomically and retains the previous
 generation for rollback. The import identity cannot authenticate to the public
 signed publisher endpoint.
+
+The Compose project restarts the runtime unless explicitly stopped, applies a
+health check and CPU/memory/PID limits, rotates JSON logs at three 8 MiB files,
+and retains at most two snapshot generations. These limits are scoped to this
+project and do not alter the host Docker daemon or unrelated applications.

@@ -53,5 +53,6 @@ describe("Codex-facing agent command contract", () => {
     });
     expect(JSON.stringify(status)).not.toContain("Private name");
     expect(JSON.stringify(status)).not.toContain("private-host");
+    expect(agentStatus({ ...EMPTY_STATE, mode: "ready", sync: { ...EMPTY_STATE.sync, lastResult: "failed" } })).toMatchObject({ ok: false });
   });
 });

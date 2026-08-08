@@ -79,7 +79,7 @@ export function validateAgentSetupPlan(value: unknown): AgentSetupPlan {
 
 export function agentStatus(state: DesktopState): Record<string, unknown> {
   return {
-    ok: state.mode !== "attention",
+    ok: state.mode !== "attention" && state.sync.lastResult !== "failed",
     mode: state.mode,
     phase: state.phase,
     vault: state.vault ? { configured: true, notes: state.vault.noteCount, bytes: state.vault.bytes } : { configured: false },
@@ -109,7 +109,8 @@ export function agentJournal(entries: readonly JournalEntry[]): Record<string, u
       ...(entry.trigger ? { trigger: entry.trigger } : {}),
       ...(entry.changes ? { changes: { ...entry.changes } } : {}),
       ...(entry.generation !== undefined ? { generation: entry.generation } : {}),
-      ...(entry.durationMs !== undefined ? { durationMs: entry.durationMs } : {})
+      ...(entry.durationMs !== undefined ? { durationMs: entry.durationMs } : {}),
+      ...(entry.diagnostic ? { diagnostic: { ...entry.diagnostic } } : {})
     }))
   };
 }
