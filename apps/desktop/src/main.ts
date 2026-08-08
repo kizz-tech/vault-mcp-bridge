@@ -1,5 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, safeStorage, shell } from "electron";
-import { access, readFile } from "node:fs/promises";
+import { mkdtempSync } from "node:fs";
+import { access, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -445,22 +447,23 @@ async function runAgentMode(arguments_: readonly string[]): Promise<number> {
     return 0;
   }
   if (command.name === "doctor") {
+    const guiRunning = !app.requestSingleInstanceLock();
     const checks = {
       platform: process.platform === "darwin",
-      encryptedStorage: safeStorage.isEncryptionAvailable(),
+      encryptedStorage: false,
       ssh: await access("/usr/bin/ssh").then(() => true, () => false),
       packaged: app.isPackaged,
       startAtLogin: app.getLoginItemSettings().openAtLogin
     };
     let installation: Awaited<ReturnType<PrivateDesktopBackend["diagnose"]>> | null = null;
     let backendAvailable = true;
-    if (checks.platform && checks.encryptedStorage && checks.ssh) {
+    if (checks.platform && checks.ssh) {
       try {
         const bundle = await createDefaultBackend({ confirmation: { confirm: async () => false } });
         if (bundle.kind === "private" && bundle.privateBackend) {
           await bundle.privateBackend.initialize({ backgroundSync: false, refreshVault: false });
           try {
-            installation = await bundle.privateBackend.diagnose();
+            installation = await bundle.privateBackend.diagnose({ verifyLocalTunnelCredential: false });
           } finally {
             bundle.privateBackend.close();
           }
@@ -471,6 +474,11 @@ async function runAgentMode(arguments_: readonly string[]): Promise<number> {
       }
     }
     const configured = installation?.checks.configuration.status === "pass";
+    // A configured installation proves that encrypted setup completed. Avoid
+    // opening macOS Keychain from a diagnostic child process; that synchronous
+    // lookup can contend with the GUI. Clean, unconfigured installs still run
+    // Electron's capability check once before setup.
+    checks.encryptedStorage = Boolean(guiRunning || configured || safeStorage.isEncryptionAvailable());
     const ready = configured ? Boolean(installation?.ok) : false;
     const ok = checks.platform && checks.encryptedStorage && checks.ssh && backendAvailable && (!configured || ready);
     writeAgentJson({ ok, ready, appVersion: app.getVersion(), checks: { ...checks, installation } });
@@ -556,14 +564,29 @@ const agentArguments = process.env.VAULT_BRIDGE_AGENT_MODE === "1"
     ? process.argv.slice(agentArgumentIndex + 1)
     : undefined;
 if (agentArguments) {
+  // Agent commands may run while the GUI owns its normal Chromium profile.
+  // Isolate ephemeral network/cache state to prevent multi-process profile
+  // contention while keeping product configuration and safeStorage in the
+  // canonical app userData directory used by createDefaultBackend().
+  const agentSessionDataPath = mkdtempSync(join(tmpdir(), "vault-bridge-agent-"));
+  app.setPath("sessionData", agentSessionDataPath);
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("log-level", "3");
+  let exitPromise: Promise<void> | undefined;
+  const exitAgent = (code: number): Promise<void> => {
+    exitPromise ??= rm(agentSessionDataPath, { recursive: true, force: true })
+      .catch(() => undefined)
+      .then(() => { app.exit(code); });
+    return exitPromise;
+  };
   process.stdout.on("error", (error: NodeJS.ErrnoException) => {
-    app.exit(error.code === "EPIPE" ? 0 : 1);
+    void exitAgent(error.code === "EPIPE" ? 0 : 1);
   });
   void runAgentMode(agentArguments).then(
-    (code) => app.exit(code),
+    (code) => exitAgent(code),
     (error: unknown) => {
       writeAgentJson({ ok: false, error: safeAgentError(error) });
-      app.exit(1);
+      return exitAgent(1);
     }
   );
 } else if (process.env.VAULT_BRIDGE_NO_BOOT !== "1") {

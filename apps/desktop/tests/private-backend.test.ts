@@ -44,11 +44,12 @@ describe("private secure-tunnel desktop backend", () => {
     let syncFailure = false;
     let syncDocumentCount = 1;
     let syncBytes = content.length;
+    const secrets = new MemorySecrets();
     const backend = new PrivateDesktopBackend({
       appDataPath,
       config: { image: `ghcr.io/example/vault-bridge@sha256:${"a".repeat(64)}`, syncIntervalMinutes: 5 },
       composeTemplatePath: "/synthetic/compose.yaml",
-      secretStore: new MemorySecrets(),
+      secretStore: secrets,
       scanner: {
         scan: async () => ({
           files: [{
@@ -114,6 +115,12 @@ describe("private secure-tunnel desktop backend", () => {
         synchronization: { status: "pass" }
       }
     });
+    await secrets.remove("secure-tunnel.runtime-api-key");
+    expect(await backend.diagnose({ verifyLocalTunnelCredential: false })).toMatchObject({
+      ok: true,
+      checks: { openai: { status: "pass" } }
+    });
+    await secrets.put("secure-tunnel.runtime-api-key", "TEST_RUNTIME_API_KEY_000000000");
 
     syncDocumentCount = 2;
     syncBytes = 99;

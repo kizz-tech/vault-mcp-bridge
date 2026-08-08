@@ -261,7 +261,7 @@ export class PrivateDesktopBackend implements DesktopBackend {
   async getJournal(): Promise<JournalEntry[]> { return this.journal.map(cloneJournalEntry); }
   async setStartAtLogin(_enabled: boolean): Promise<void> {}
 
-  async diagnose(): Promise<PrivateHealthReport> {
+  async diagnose(options: { verifyLocalTunnelCredential?: boolean } = {}): Promise<PrivateHealthReport> {
     const checkedAt = this.now().toISOString();
     const configured = this.record.phase === "ready" && Boolean(
       this.record.vault && this.record.server && this.record.tunnelId && this.installation() && this.record.deviceId
@@ -285,9 +285,11 @@ export class PrivateDesktopBackend implements DesktopBackend {
     }
 
     const installation = this.installation();
+    let runtimeHealthy = false;
     if (installation && this.deployment.health) {
       try {
         const health = await this.deployment.health({ ...installation, server: this.record.server });
+        runtimeHealthy = health.ssh && health.runtime;
         checks.server = health.ssh && health.runtime
           ? { status: "pass" }
           : { status: "fail", diagnostic: diagnosticFor(new Error("runtime unavailable"), "runtime") };
@@ -296,16 +298,22 @@ export class PrivateDesktopBackend implements DesktopBackend {
       }
     }
 
-    const apiKey = await this.secrets.get(RUNTIME_KEY_SECRET);
-    if (this.record.tunnelId && apiKey) {
-      try {
-        await (this.options.tunnelVerifier ?? verifyTunnel)(this.record.tunnelId, apiKey);
-        checks.openai = { status: "pass" };
-      } catch (error) {
-        checks.openai = { status: "fail", diagnostic: diagnosticFor(error, "openai") };
-      }
+    if (options.verifyLocalTunnelCredential === false) {
+      checks.openai = runtimeHealthy
+        ? { status: "pass" }
+        : { status: "fail", diagnostic: diagnosticFor(new Error("tunnel unavailable"), "openai") };
     } else {
-      checks.openai = { status: "fail", diagnostic: diagnosticFor(new Error("tunnel unavailable"), "openai") };
+      const apiKey = await this.secrets.get(RUNTIME_KEY_SECRET);
+      if (this.record.tunnelId && apiKey) {
+        try {
+          await (this.options.tunnelVerifier ?? verifyTunnel)(this.record.tunnelId, apiKey);
+          checks.openai = { status: "pass" };
+        } catch (error) {
+          checks.openai = { status: "fail", diagnostic: diagnosticFor(error, "openai") };
+        }
+      } else {
+        checks.openai = { status: "fail", diagnostic: diagnosticFor(new Error("tunnel unavailable"), "openai") };
+      }
     }
 
     checks.synchronization = this.record.lastSyncResult && this.record.lastSyncResult !== "failed"
@@ -793,6 +801,7 @@ async function verifyTunnel(tunnelId: string, apiKey: string): Promise<void> {
   const response = await fetch(`https://api.openai.com/v1/tunnels/${tunnelId}`, {
     method: "GET",
     redirect: "error",
+    signal: AbortSignal.timeout(15_000),
     headers: { authorization: `Bearer ${apiKey}` }
   });
   if (!response.ok) throw new Error("tunnel_credentials_invalid");

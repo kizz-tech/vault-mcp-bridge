@@ -72,6 +72,8 @@ const elements = {
 let currentState: DesktopState = { ...EMPTY_STATE };
 let currentJournal: JournalEntry[] = [];
 let journalFilter: "all" | "changes" | "errors" = "all";
+let stopStateListener: (() => void) | null = null;
+const PASSIVE_REFRESH_MS = 30_000;
 
 function render(state: DesktopState): void {
   currentState = state;
@@ -476,14 +478,30 @@ elements.attentionAction.addEventListener("click", () => {
   }
 });
 
+async function refreshVisibleState(): Promise<void> {
+  render(await bridge.getState());
+  if (!elements.journalView.hidden) await refreshJournal();
+}
+
 void (async () => {
   try {
     elements.loginToggle.checked = await bridge.getStartAtLogin();
     render(await bridge.getState());
-    bridge.onState((state) => {
+    stopStateListener = bridge.onState((state) => {
       render(state);
       if (!elements.journalView.hidden) void refreshJournal();
     });
+    window.setInterval(() => {
+      if (!document.hidden) void refreshVisibleState().catch(() => undefined);
+    }, PASSIVE_REFRESH_MS);
+    window.addEventListener("focus", () => void refreshVisibleState().catch(() => undefined));
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) void refreshVisibleState().catch(() => undefined);
+    });
+    window.addEventListener("beforeunload", () => {
+      stopStateListener?.();
+      stopStateListener = null;
+    }, { once: true });
   } catch {
     elements.onboardingError.textContent = "Operation failed";
     elements.onboardingError.hidden = false;

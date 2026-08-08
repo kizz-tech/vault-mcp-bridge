@@ -1,7 +1,7 @@
 {
   "name": "@vault-mcp-bridge/desktop",
   "productName": "Vault Bridge",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Vault Bridge macOS desktop shell",
   "type": "module",

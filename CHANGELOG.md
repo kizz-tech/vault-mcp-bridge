@@ -3,6 +3,16 @@
 All notable changes to Vault Bridge are documented here. The project follows
 semantic versioning while the public product contract is still evolving.
 
+## [0.1.3] - 2026-08-08
+
+### Fixed
+
+- Keep the visible Overview and Activity surfaces reconciled with the backend
+  after unattended synchronization, including a passive refresh and immediate
+  refresh when the window regains focus.
+- Isolate ephemeral CLI session data and avoid reopening Keychain from
+  `doctor` on configured installs; live tunnel verification remains bounded.
+
 ## [0.1.2] - 2026-08-08
 
 ### Fixed
@@ -68,6 +78,7 @@ First public preview.
 - The supported current route is the Codex runbook or an inspected source
   build. Signed/notarized distribution is tracked in the public roadmap.
 
+[0.1.3]: https://github.com/kizz-tech/vault-mcp-bridge/releases/tag/v0.1.3
 [0.1.2]: https://github.com/kizz-tech/vault-mcp-bridge/releases/tag/v0.1.2
 [0.1.1]: https://github.com/kizz-tech/vault-mcp-bridge/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kizz-tech/vault-mcp-bridge/releases/tag/v0.1.0
