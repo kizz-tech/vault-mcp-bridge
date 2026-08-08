@@ -29,7 +29,7 @@ FROM ${NODE_IMAGE} AS runtime
 ARG BUILD_DATE=""
 ARG SOURCE=""
 ARG VCS_REF=""
-ARG VERSION="0.1.1"
+ARG VERSION="0.1.2"
 LABEL org.opencontainers.image.title="Vault Bridge server" \
       org.opencontainers.image.description="Read-only MCP replica for an Obsidian-compatible vault" \
       org.opencontainers.image.source=$SOURCE \

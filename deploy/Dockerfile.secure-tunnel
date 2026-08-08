@@ -48,7 +48,7 @@ FROM ${NODE_IMAGE} AS runtime
 ARG BUILD_DATE=""
 ARG SOURCE="https://github.com/kizz-tech/vault-mcp-bridge"
 ARG VCS_REF=""
-ARG VERSION="0.1.1"
+ARG VERSION="0.1.2"
 LABEL org.opencontainers.image.title="Vault Bridge Secure MCP Tunnel" \
       org.opencontainers.image.description="Private, outbound-only, read-only Obsidian vault bridge for ChatGPT" \
       org.opencontainers.image.source=$SOURCE \

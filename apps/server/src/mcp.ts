@@ -104,7 +104,7 @@ export const createMcpHandler = async (store: VaultStore, config: ServerConfig):
   if (!sdk.McpServer || !sdk.createMcpHandler || !nodeSdk.toNodeHandler) throw new Error("MCP v2 stateless handler API is unavailable");
 
   const makeServer = (): McpServerLike => registerVaultTools(
-    new sdk.McpServer!({ name: "vault-mcp-bridge", version: "0.1.1" }),
+    new sdk.McpServer!({ name: "vault-mcp-bridge", version: "0.1.2" }),
     store,
     config,
     { securitySchemes: oauthSecuritySchemes(config.jwtScope) },

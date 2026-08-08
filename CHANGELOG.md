@@ -3,6 +3,19 @@
 All notable changes to Vault Bridge are documented here. The project follows
 semantic versioning while the public product contract is still evolving.
 
+## [0.1.2] - 2026-08-08
+
+### Fixed
+
+- Refresh the Overview vault note/byte totals from each accepted sync receipt,
+  so the connection path and latest diff describe the same generation without
+  requiring an app restart.
+
+### Distribution status
+
+- Apple Silicon DMG and ZIP artifacts remain ad-hoc signed and are not Apple
+  notarized.
+
 ## [0.1.1] - 2026-08-08
 
 ### Changed
@@ -55,5 +68,6 @@ First public preview.
 - The supported current route is the Codex runbook or an inspected source
   build. Signed/notarized distribution is tracked in the public roadmap.
 
+[0.1.2]: https://github.com/kizz-tech/vault-mcp-bridge/releases/tag/v0.1.2
 [0.1.1]: https://github.com/kizz-tech/vault-mcp-bridge/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kizz-tech/vault-mcp-bridge/releases/tag/v0.1.0

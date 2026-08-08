@@ -408,6 +408,10 @@ export class PrivateDesktopBackend implements DesktopBackend {
       const result = receipt.status === "uploaded" ? "published" : "unchanged";
       this.record = {
         ...this.record,
+        vault: {
+          ...vault,
+          summary: { ...vault.summary, noteCount: receipt.documentCount, bytes: receipt.changes.bytes }
+        },
         phase: "ready",
         paused: false,
         ...(receipt.status === "uploaded" ? { lastPublishedAt: checkedAt } : {}),
@@ -435,6 +439,18 @@ export class PrivateDesktopBackend implements DesktopBackend {
       const result = receipt.status === "uploaded" ? "published" : "unchanged";
       this.record = {
         ...this.record,
+        ...(this.record.vault
+          ? {
+              vault: {
+                ...this.record.vault,
+                summary: {
+                  ...this.record.vault.summary,
+                  noteCount: receipt.documentCount,
+                  bytes: receipt.changes.bytes
+                }
+              }
+            }
+          : {}),
         ...(receipt.status === "uploaded" ? { lastPublishedAt: checkedAt } : {}),
         lastCheckedAt: checkedAt,
         lastSyncResult: result,

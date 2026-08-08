@@ -42,6 +42,8 @@ describe("private secure-tunnel desktop backend", () => {
       health: vi.fn(async () => ({ ssh: true as const, runtime: true }))
     };
     let syncFailure = false;
+    let syncDocumentCount = 1;
+    let syncBytes = content.length;
     const backend = new PrivateDesktopBackend({
       appDataPath,
       config: { image: `ghcr.io/example/vault-bridge@sha256:${"a".repeat(64)}`, syncIntervalMinutes: 5 },
@@ -69,8 +71,8 @@ describe("private secure-tunnel desktop backend", () => {
         return {
           status: "uploaded" as const,
           generation: 1,
-          documentCount: 1,
-          changes: { added: 1, modified: 0, removed: 0, unchanged: 0, total: 1, bytes: content.length },
+          documentCount: syncDocumentCount,
+          changes: { added: 1, modified: 0, removed: 0, unchanged: 0, total: syncDocumentCount, bytes: syncBytes },
           digest: "digest_synthetic_0001"
         };
       },
@@ -112,6 +114,11 @@ describe("private secure-tunnel desktop backend", () => {
         synchronization: { status: "pass" }
       }
     });
+
+    syncDocumentCount = 2;
+    syncBytes = 99;
+    const refreshed = await backend.synchronize();
+    expect(refreshed.vault).toMatchObject({ noteCount: 2, bytes: 99 });
 
     syncFailure = true;
     const failed = await backend.synchronize();
