@@ -154,7 +154,13 @@ describe("DurableCredentialVault", () => {
     const parsed = JSON.parse(await readFile(filePath, "utf8")) as { entries: { ciphertext: string }[] };
     parsed.entries[0]!.ciphertext = `${parsed.entries[0]!.ciphertext.slice(0, -1)}${parsed.entries[0]!.ciphertext.endsWith("A") ? "B" : "A"}`;
     await writeFile(filePath, JSON.stringify(parsed), { mode: 0o600 });
-    expect(() => new DurableCredentialVault(filePath, key)).toThrow(/decrypt|corrupt/u);
+    try {
+      new DurableCredentialVault(filePath, key);
+      throw new Error("tampered credential vault was accepted");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DurableCredentialVaultError);
+      expect(error).toHaveProperty("code", "corrupt");
+    }
 
     const keyFile = join(directory, "master.key");
     await writeFile(keyFile, key, { mode: 0o644 });

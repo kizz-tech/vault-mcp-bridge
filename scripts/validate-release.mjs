@@ -136,60 +136,36 @@ for (const workflowPath of workflowPaths) {
   }
 }
 const releaseWorkflow = await readFile(resolve(root, ".github/workflows/release.yml"), "utf8");
-const containerJob = releaseWorkflow.indexOf("\n  container:");
-const publishJob = releaseWorkflow.indexOf("\n  container-publish:");
-const publishScan = releaseWorkflow.indexOf("Scan both platforms of the exact OCI candidate");
-const candidateUpload = releaseWorkflow.indexOf("Upload scanned OCI candidate");
-const candidateVerify = releaseWorkflow.indexOf("Verify candidate artifacts before registry authority is used");
-const registryLogin = releaseWorkflow.indexOf("Log in to GHCR after both scan gates pass");
-const publishCopy = releaseWorkflow.indexOf("Publish both exact scanned OCI archives and verify their digests");
-if (
-  containerJob < 0 ||
-  publishScan <= containerJob ||
-  candidateUpload <= publishScan ||
-  publishJob <= candidateUpload ||
-  candidateVerify <= publishJob ||
-  registryLogin <= candidateVerify ||
-  publishCopy <= registryLogin
-) {
-  failures.push("release workflow must scan and artifact both candidates before the isolated publish job receives registry authority");
+if (!releaseWorkflow.includes("workflow_dispatch:")) failures.push("release workflow must be manual-only");
+if (/^\s{2}(?:push|pull_request|schedule):/mu.test(releaseWorkflow)) failures.push("release workflow must not have an automatic trigger");
+const repositoryCheck = releaseWorkflow.indexOf("Check repository");
+const registryLogin = releaseWorkflow.indexOf("Log in to GHCR");
+const publishImage = releaseWorkflow.indexOf("Build and publish the multi-arch image");
+const digestVerify = releaseWorkflow.indexOf("Verify the published manifest digest");
+if (repositoryCheck < 0 || registryLogin <= repositoryCheck || publishImage <= registryLogin || digestVerify <= publishImage) {
+  failures.push("release workflow must validate before registry login, then publish and verify one image");
 }
-const buildSection = containerJob >= 0 && publishJob > containerJob
-  ? releaseWorkflow.slice(containerJob, publishJob)
-  : "";
-const publishSection = publishJob >= 0 ? releaseWorkflow.slice(publishJob) : "";
-if (buildSection.includes("packages: write")) failures.push("container build/scan job must not have registry write authority");
-if (!buildSection.includes("tags: ${{ matrix.image }}:${{ github.sha }}")) {
-  failures.push("release OCI candidates must use the immutable workflow commit as their archive reference");
-}
-if (!publishSection.includes("needs: [preflight, container]")) failures.push("container publish job must depend on every matrix scan");
-if (!publishSection.includes("packages: write")) failures.push("container publish job is missing registry write authority");
 if ((releaseWorkflow.match(/packages:\s*write/gu) ?? []).length !== 1) {
-  failures.push("release workflow must grant packages: write only once, in the final publish job");
+  failures.push("release workflow must grant packages: write exactly once");
 }
 for (const requiredBoundary of [
-  "oci-archive:${archive}",
-  "--preserve-digests",
-  "sha256sum",
-  "steps.candidate.outputs.digest"
+  "deploy/Dockerfile.secure-tunnel",
+  "linux/amd64,linux/arm64",
+  "push: true",
+  "sha-${{ github.sha }}",
+  "steps.image.outputs.digest",
+  "docker buildx imagetools inspect"
 ]) {
-  if (!releaseWorkflow.includes(requiredBoundary)) failures.push(`release workflow is missing immutable candidate boundary ${requiredBoundary}`);
+  if (!releaseWorkflow.includes(requiredBoundary)) failures.push(`release workflow is missing Secure Tunnel release boundary ${requiredBoundary}`);
 }
 for (const requiredPin of [
   "tonistiigi/binfmt@sha256:",
   "moby/buildkit@sha256:",
-  "docker/buildkit-syft-scanner@sha256:",
-  "aquasec/trivy@sha256:",
-  "quay.io/skopeo/stable@sha256:"
+  "docker/buildkit-syft-scanner@sha256:"
 ]) {
   if (!releaseWorkflow.includes(requiredPin)) failures.push(`release workflow is missing digest pin ${requiredPin}`);
 }
-if (releaseWorkflow.includes("localhost:5000/")) {
-  failures.push("release workflow must not hand a mutable job-local registry tag across the scan/publish boundary");
-}
-if (releaseWorkflow.includes("aquasecurity/trivy-action@")) {
-  failures.push("release workflow must use the digest-pinned scanner image instead of a transitive composite action");
-}
+if (/Dockerfile\.(?:server|edge)/u.test(releaseWorkflow)) failures.push("primary release workflow must not publish legacy server/edge images");
 if (releaseWorkflow.includes("sbom: true")) {
   failures.push("release workflow must pin the BuildKit SBOM generator by digest");
 }

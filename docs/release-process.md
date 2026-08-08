@@ -83,7 +83,14 @@ pins the Node base, tunnel-client version, and per-architecture release archive
 SHA-256. The primary Compose template has one long-running runtime, one
 network-disabled secret-init job, no host ports, and two named volumes.
 
-The sections below describe the advanced public server + edge images.
+The `Release container` GitHub workflow is manual-only. It runs the repository
+checks in one Ubuntu job, grants that job `packages: write`, publishes this one
+multi-architecture Secure Tunnel image with provenance and a pinned SBOM
+generator, then verifies the returned manifest digest. It has no push, pull
+request, schedule, macOS, or legacy image jobs.
+
+The sections below describe advanced public server + edge images that operators
+may build themselves.
 
 The server and edge images use their respective pinned base images and
 Dockerfiles:
@@ -93,14 +100,9 @@ pnpm docker:build
 docker build -f deploy/Dockerfile.edge -t vault-mcp-bridge-edge:local .
 ```
 
-The release workflow builds both `linux/amd64` and `linux/arm64`, emits SBOM
-and provenance attestations, and scans each platform from an immutable OCI
-archive with Trivy. Matrix build/scan jobs are read-only and upload the archives
-plus checksums as workflow artifacts. A workflow dispatch must explicitly set
-the `publish` input; only after both matrix scans pass does one non-matrix job
-receive registry write authority, revalidate both archives and manifest digests,
-and copy the exact candidates to GHCR with digest preservation. Record each
-immutable `sha256` digest; a tag or successful build is not a deployment.
+Advanced public-mode images are intentionally absent from the default workflow.
+If a downstream operator publishes them, it must record each immutable
+`sha256` digest; a tag or successful build is not a deployment.
 
 The runtime accepts only digest-pinned image references. Generated Compose has
 two long-running services plus two network-disabled one-shot secret-init jobs;
