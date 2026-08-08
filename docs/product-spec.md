@@ -134,8 +134,7 @@ Excluded:
 - two-way sync and conflict resolution;
 - attachment/OCR/media extraction;
 - multi-user sharing and ACLs;
-- management of unrelated VPS apps, Coolify, DNS, reverse proxies, firewalls,
-  or OS updates;
+- management of unrelated VPS apps or infrastructure;
 - automatic OpenAI account consent or ChatGPT catalog publication.
 
 ## Product invariants

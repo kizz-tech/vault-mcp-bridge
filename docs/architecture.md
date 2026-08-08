@@ -147,7 +147,7 @@ network-disabled `runtime_secrets_init` job. The runtime:
 - publishes no host ports;
 - makes outbound HTTPS calls only to operate the OpenAI tunnel.
 
-It does not join existing Coolify/Traefik networks, change DNS/firewall/Docker
+It does not join networks owned by other services, change DNS/firewall/Docker
 daemon settings, install a reverse proxy, mount the host vault, or use the
 Docker socket. Compose project and volume names derive from one opaque
 installation ID, so lifecycle commands target only that installation.

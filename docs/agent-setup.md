@@ -15,8 +15,8 @@ Obsidian-compatible vault to one isolated Docker Compose project on an
 owner-controlled Linux VPS, connect it through an owner-controlled OpenAI
 Secure MCP Tunnel, and verify ChatGPT read-only `search` and `fetch` calls.
 
-Do not add write tools, public host ports, reverse proxies, Coolify resources,
-server-to-Mac control, arbitrary path access, or author-operated services.
+Do not add write tools, public host ports, server-to-Mac control, arbitrary path
+access, author-operated services, or changes to unrelated infrastructure.
 
 ## Approval boundary
 
