@@ -1,147 +1,118 @@
-<div align="center">
-
-<img src="apps/desktop/assets/vault-bridge-mark.svg" alt="Vault Bridge" width="104" />
-
 # Vault Bridge
 
-**Give ChatGPT read-only access to a private Obsidian vault — without exposing
-your Mac or opening a public port on your server.**
+Read-only access to a private Obsidian vault from ChatGPT.
 
-[![Release](https://img.shields.io/github/v/release/kizz-tech/vault-mcp-bridge?include_prereleases&label=release)](https://github.com/kizz-tech/vault-mcp-bridge/releases)
-[![License](https://img.shields.io/github/license/kizz-tech/vault-mcp-bridge)](LICENSE)
-![Mode](https://img.shields.io/badge/mode-read--only-0f766e)
-![Runtime](https://img.shields.io/badge/runtime-self--hosted-1f2937)
+Vault Bridge is a macOS application that copies a filtered snapshot of a vault
+to an isolated Docker project on your own Linux server. OpenAI Secure MCP
+Tunnel connects that private MCP server to ChatGPT without a public port or
+inbound access to the Mac.
 
-[**Install with Codex**](docs/install-with-codex.md) ·
-[Download preview](https://github.com/kizz-tech/vault-mcp-bridge/releases) ·
+[Install with Codex](docs/install-with-codex.md) ·
+[Releases](https://github.com/kizz-tech/vault-mcp-bridge/releases) ·
 [Architecture](docs/architecture.md) ·
 [Security](SECURITY.md)
 
-</div>
+The current Apple Silicon preview is integrity-checked but not Developer ID
+signed or notarized. Do not bypass a macOS security warning for an untrusted
+download. The supported preview path is the Codex installation runbook.
 
-Vault Bridge is a small macOS application for people who want their own notes
-available inside ChatGPT without turning an Obsidian vault into a public web
-service. Choose a vault, connect a Linux server over SSH, connect an
-owner-controlled OpenAI Secure MCP Tunnel, and select **Set up**.
+## What it does
 
-> [!IMPORTANT]
-> `v0.1.0` is an early preview for Apple Silicon. Its downloadable macOS
-> artifacts are integrity-checked but not Developer ID signed or notarized.
-> Use the Codex installation flow for the current supported setup path. Do not
-> bypass macOS security warnings to run an untrusted download.
+- selects any local Obsidian vault;
+- connects to an existing Linux server over SSH;
+- installs an isolated, resource-bounded Docker Compose project;
+- publishes complete vault snapshots on startup, every five minutes, after
+  resume, or on demand;
+- exposes only `search` and `fetch` to ChatGPT;
+- shows connection state, synchronization state, and an aggregate activity
+  log in one desktop application.
 
-## Why it is different
+The application does not write to the vault. It does not expose iCloud, a local
+filesystem, the Docker socket, a shell, or a public server port.
 
-| Principle | Product behavior |
-| --- | --- |
-| Your vault stays canonical | The Mac only reads the selected vault. The VPS receives a replaceable snapshot, never iCloud credentials or filesystem access. |
-| No inbound exposure | The runtime has no published host ports. OpenAI's tunnel client initiates outbound HTTPS from the isolated Docker project. |
-| Read-only means read-only | ChatGPT gets exactly `search` and `fetch`. There is no write, delete, shell, raw path, SQL, or sync-control tool. |
-| Built for non-developers | Copy one prompt into Codex. The agent performs routine setup while account consent, credentials, and the SSH fingerprint stay under owner control. |
+## Install
 
-OpenAI documents Secure MCP Tunnel as an outbound-only way to connect private
-MCP servers to supported products without exposing them to the public internet.
-Vault Bridge packages that infrastructure into one owner-facing application.
+For an agent-guided installation, open
+[docs/install-with-codex.md](docs/install-with-codex.md), copy the prompt, and
+paste it into Codex. The runbook keeps account login, credentials, and the
+first SSH fingerprint approval with the owner.
 
-## Start here
+Requirements:
 
-### I do not want to use a terminal
+- Apple Silicon Mac;
+- Linux server reachable over SSH;
+- Docker Engine with Docker Compose on the server;
+- access to OpenAI Secure MCP Tunnels and the corresponding ChatGPT connection
+  surface.
 
-Open [Install with Codex](docs/install-with-codex.md), copy the single prompt,
-and paste it into Codex. The versioned runbook tells the agent how to install,
-configure, verify, and safely stop when human approval is required.
+Release downloads include a DMG, ZIP, and SHA-256 manifest. Read the release
+notes before installing; preview binaries are not yet notarized.
 
-### I want to inspect the preview artifacts
-
-Open [GitHub Releases](https://github.com/kizz-tech/vault-mcp-bridge/releases).
-Every release includes a DMG, ZIP, and a machine-readable SHA-256 manifest.
-The `v0.1.0` binaries are not notarized; their release notes state the exact
-validation level and limitations.
-
-Requirements for the current product:
-
-- an Apple Silicon Mac that can read the vault;
-- a Linux VPS reachable through SSH with Docker Engine and Docker Compose;
-- an OpenAI account or workspace with Secure MCP Tunnels and the required
-  ChatGPT connection surface enabled.
-
-## How it works
+## Architecture
 
 ```mermaid
 flowchart LR
-    phone["Obsidian on phone"] <-->|"iCloud / Obsidian sync"| mac["Vault on Mac\ncanonical copy"]
-    mac -->|"local read-only scan"| app["Vault Bridge.app"]
-    app -->|"SSH · immutable snapshot"| vps["Isolated Docker project\non your VPS"]
-    vps -->|"outbound HTTPS only"| tunnel["OpenAI Secure MCP Tunnel"]
+    phone["Obsidian on phone"] <-->|"iCloud or Obsidian Sync"| vault["Vault on Mac"]
+    vault -->|"local read-only scan"| app["Vault Bridge"]
+    app -->|"SSH snapshot upload"| runtime["Docker project on your server"]
+    runtime -->|"outbound HTTPS"| tunnel["OpenAI Secure MCP Tunnel"]
     tunnel <--> chat["ChatGPT"]
 ```
 
-Phone-to-Mac freshness remains an iCloud or Obsidian responsibility. Vault
-Bridge publishes only the files visible on the Mac during a successful scan.
-The app checks at startup, every five minutes while running, after **Resume**,
-or when the owner selects **Sync now**.
+The vault on the Mac remains canonical. The server copy is replaceable and
+activates as one complete generation after validation. Phone-to-Mac freshness
+remains the responsibility of iCloud or Obsidian Sync.
 
-The full-screen Activity view records aggregate added, modified, removed, and
-unchanged counts, bytes, duration, trigger, and snapshot generation. It never
-records note text, titles, search queries, server addresses, credentials, or
-local paths.
+## ChatGPT tools
 
-## The ChatGPT surface
+The MCP surface is deliberately small:
 
-The remote MCP exposes two tools:
+- `search({ query })` returns bounded matches with opaque IDs;
+- `fetch({ id })` returns one document from the active snapshot.
 
-- `search({ query })` — bounded full-text search with opaque result IDs;
-- `fetch({ id })` — retrieve one document by an opaque ID.
+There is no model-facing browse-all, write, delete, sync-control, raw-path,
+SQL, or shell tool. Vault content is treated as untrusted source data.
 
-There is no model-facing browse-all operation. IDs do not reveal local paths,
-and knowing an ID does not grant access outside the active snapshot. Content
-returned from the vault is marked and handled as untrusted source data.
+Secure MCP Tunnel supports private connections and developer-mode testing. It
+does not publish Vault Bridge to the public ChatGPT app catalog.
 
-Secure MCP Tunnel is for private connections and developer-mode testing; it is
-not public ChatGPT catalog distribution. A future public plugin would require a
-separate stable HTTPS endpoint, authentication, review, and policy surface.
-
-## Security boundary
+## Security model
 
 - Hidden directories, `.obsidian`, `.git`, `node_modules`, and symlinks are
   excluded by default.
-- Snapshots are complete generations and activate atomically.
-- The VPS runtime is non-root, resource-bounded, read-only where practical,
-  and has no host ports, host mounts, Docker socket, or privileged mode.
-- The OpenAI runtime key enters the app through stdin or the native UI and is
-  stored through macOS encrypted storage. It is not accepted in setup JSON or
-  process arguments.
-- The first SSH identity is an explicit owner approval; the exact fingerprint
-  and host-key algorithm are pinned for later connections.
-- The VPS administrator and Docker daemon can inspect replica data. Use a VPS
-  you trust; containers are not a hostile multi-tenant security boundary.
+- SSH host identity is approved once and pinned.
+- The server process is non-root and resource-bounded, with no host ports,
+  host mounts, privileged mode, or Docker socket.
+- The OpenAI runtime key is accepted through the native UI or stdin and stored
+  with macOS encrypted storage. It is not accepted in setup JSON or process
+  arguments.
+- Activity records counts, bytes, duration, trigger, and generation. It does
+  not record note contents, titles, queries, credentials, addresses, or local
+  paths.
+- The VPS administrator and Docker daemon can inspect the replica. Use a
+  server you trust.
 
-Read the [threat model](docs/threat-model.md),
-[architecture](docs/architecture.md), and
-[Secure Tunnel deployment contract](deploy/secure-tunnel/README.md) before
-using sensitive material. Report vulnerabilities privately through
-[SECURITY.md](SECURITY.md), never with vault evidence in a public issue.
+See the [threat model](docs/threat-model.md) and
+[deployment contract](deploy/secure-tunnel/README.md). Report vulnerabilities
+through [SECURITY.md](SECURITY.md), without vault evidence in a public issue.
 
-## Current status
+## Status
 
-| Surface | `v0.1.0` |
+| Surface | Current preview |
 | --- | --- |
-| macOS desktop | Apple Silicon preview; unsigned/not notarized |
-| Vault formats | Markdown, Canvas, and Bases text |
-| MCP tools | Read-only `search` and `fetch` |
-| Sync | Startup + five-minute schedule + resume + manual |
-| Remote runtime | Docker Compose on Linux; amd64/arm64 image |
-| Installation | Agent-first Codex runbook or source build |
-| Vault writes | Intentionally absent |
+| macOS | Apple Silicon; not notarized |
+| Vault data | Markdown, Canvas, and Bases text |
+| MCP | Read-only `search` and `fetch` |
+| Sync | Startup, five-minute schedule, resume, manual |
+| Runtime | Docker Compose; Linux amd64 and arm64 |
+| Installation | Codex runbook or source build |
 
-The public roadmap lives in
-[GitHub Issues](https://github.com/kizz-tech/vault-mcp-bridge/issues). The first
-distribution priorities are signed/notarized macOS artifacts, clean-machine
-agent-install acceptance tests, and additional local publisher platforms.
+The public roadmap is tracked in
+[GitHub Issues](https://github.com/kizz-tech/vault-mcp-bridge/issues).
 
 ## Development
 
-Requirements are Node.js 24+ and pnpm 10.
+Requires Node.js 24+ and pnpm 10.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -149,18 +120,15 @@ pnpm check
 pnpm dev
 ```
 
-Use only synthetic fixtures during development. The Electron renderer loads
-from `vaultbridge://app`, with sandboxing, context isolation, disabled Node
-integration, blocked navigation/webviews, and an explicit IPC allowlist.
+Use only synthetic fixtures during development. The repository is a TypeScript
+monorepo:
 
-The repository is a TypeScript monorepo:
+- `apps/desktop` — macOS application and deployment owner;
+- `apps/agent` — vault scanner and snapshot publisher;
+- `apps/server` — SQLite/FTS5 store and MCP server;
+- `deploy/secure-tunnel` — isolated Docker Compose deployment;
+- `packages/*` — shared contracts and libraries;
+- `apps/edge`, `deploy/runtime` — advanced public HTTPS/OAuth mode.
 
-- `apps/desktop` — the one-launch macOS product and SSH deployment owner;
-- `apps/agent` — scanner and snapshot synchronization;
-- `apps/server` — SQLite/FTS5 snapshot store and private MCP server;
-- `deploy/secure-tunnel` — the isolated Compose deployment;
-- `packages/*` — contracts, scanning, deployment, and orchestration libraries;
-- `apps/edge` and `deploy/runtime` — an advanced public HTTPS/OAuth mode.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for product invariants and validation
-commands. Vault Bridge is licensed under [Apache-2.0](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under
+[Apache-2.0](LICENSE).

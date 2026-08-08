@@ -255,16 +255,16 @@ function renderJournal(): void {
     item.className = `activity-entry ${entry.level}`;
     const marker = document.createElement("span");
     marker.className = "event-marker";
+    const time = document.createElement("time");
+    time.dateTime = entry.at;
+    time.textContent = formatDateTime(entry.at);
     const body = document.createElement("div");
     body.className = "event-body";
     const heading = document.createElement("div");
     heading.className = "event-heading";
     const message = document.createElement("strong");
     message.textContent = entry.message;
-    const time = document.createElement("time");
-    time.dateTime = entry.at;
-    time.textContent = formatDateTime(entry.at);
-    heading.append(message, time);
+    heading.append(message);
     body.append(heading);
     if (entry.changes) {
       const changes = document.createElement("div");
@@ -284,7 +284,7 @@ function renderJournal(): void {
       meta.textContent = metadata.join(" · ");
       body.append(meta);
     }
-    item.append(marker, body);
+    item.append(time, marker, body);
     elements.journalList.append(item);
   }
 }

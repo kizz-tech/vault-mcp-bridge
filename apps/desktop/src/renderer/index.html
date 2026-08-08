@@ -13,85 +13,96 @@
   <body>
     <main class="shell" aria-live="polite">
       <header class="topbar">
-        <div class="brand"><span class="brand-mark" aria-hidden="true">V</span><h1>Vault Bridge</h1></div>
+        <div class="brand"><h1>Vault Bridge</h1></div>
         <nav aria-label="Main navigation">
           <button id="overview-button" class="nav-button active" type="button">Overview</button>
           <button id="journal-button" class="nav-button" type="button">Activity</button>
-          <button id="menu-button" class="icon-button" type="button" aria-label="Settings">•••</button>
+          <button id="menu-button" class="icon-button" type="button" aria-label="Settings">Settings</button>
         </nav>
       </header>
 
       <div id="overview-view" class="view">
         <section id="onboarding" class="onboarding" aria-labelledby="onboarding-title">
-          <div class="section-heading">
-            <span class="eyebrow">New connection</span>
-            <h2 id="onboarding-title">Connect your vault</h2>
-          </div>
+          <header class="page-heading">
+            <h2 id="onboarding-title">Setup</h2>
+          </header>
           <div class="setup-list">
             <div class="setup-row">
-              <span class="step-icon">01</span>
+              <span class="step-index">1</span>
               <span class="label">Vault</span>
               <span id="vault-value" class="value">Not selected</span>
               <button id="vault-action" class="secondary" type="button">Choose</button>
             </div>
             <div class="setup-row">
-              <span class="step-icon">02</span>
+              <span class="step-index">2</span>
               <span class="label">Server</span>
               <span id="server-value" class="value">Not configured</span>
               <button id="server-action" class="secondary" type="button">Add</button>
             </div>
             <div id="tunnel-row" class="setup-row">
-              <span class="step-icon">03</span>
+              <span class="step-index">3</span>
               <span class="label">OpenAI</span>
               <span id="tunnel-value" class="value">Not configured</span>
               <button id="tunnel-action" class="secondary" type="button">Add</button>
             </div>
           </div>
           <p id="onboarding-error" class="error" hidden></p>
-          <button id="setup-action" class="primary setup-primary" type="button" disabled>Set up Vault Bridge</button>
+          <div class="setup-footer">
+            <button id="setup-action" class="primary" type="button" disabled>Set up</button>
+          </div>
         </section>
 
         <section id="ready" class="ready-view" hidden aria-labelledby="ready-title">
-          <div class="hero-row">
+          <header class="page-heading overview-heading">
             <div>
-              <span class="eyebrow">Connected vault</span>
-              <h2 id="ready-title">Vault Bridge</h2>
+              <h2 id="ready-title">Overview</h2>
               <p id="ready-summary" class="summary"></p>
             </div>
             <span id="status-pill" class="status">Ready</span>
-          </div>
+          </header>
 
-          <div class="connection-grid">
-            <article class="connection-card">
-              <span class="card-label">Server</span>
-              <strong id="ready-server"></strong>
-              <button id="ready-server-action" class="text-action" type="button">Manage</button>
-            </article>
-            <article class="connection-card">
-              <span class="card-label">ChatGPT</span>
-              <strong id="ready-chatgpt">Not configured</strong>
-              <button id="chatgpt-action" class="text-action" type="button">Open ChatGPT</button>
-            </article>
-            <article class="connection-card">
-              <span class="card-label">Vault</span>
-              <strong id="vault-metric">—</strong>
-              <span id="vault-size" class="card-meta">—</span>
-            </article>
-          </div>
-
-          <section class="sync-panel" aria-labelledby="sync-title">
-            <div class="sync-heading">
-              <div><span class="eyebrow">Synchronization</span><h3 id="sync-title">Automatic</h3></div>
-              <button id="pause-action" class="secondary" type="button">Pause</button>
+          <section class="panel" aria-labelledby="connections-title">
+            <header class="panel-heading"><h3 id="connections-title">Connections</h3></header>
+            <div class="connection-list">
+              <div class="connection-row">
+                <span class="row-label">Vault</span>
+                <span class="row-value"><strong id="vault-metric">—</strong><span id="vault-size" class="row-meta">—</span></span>
+                <span class="row-state">Local</span>
+              </div>
+              <div class="connection-row">
+                <span class="row-label">Server</span>
+                <strong id="ready-server" class="row-value"></strong>
+                <button id="ready-server-action" class="text-action" type="button">Manage</button>
+              </div>
+              <div class="connection-row">
+                <span class="row-label">ChatGPT</span>
+                <strong id="ready-chatgpt" class="row-value">Not configured</strong>
+                <button id="chatgpt-action" class="text-action" type="button">Open ChatGPT</button>
+              </div>
             </div>
+          </section>
+
+          <section class="panel sync-panel" aria-labelledby="sync-heading-label">
+            <header class="panel-heading sync-heading">
+              <div class="heading-with-state">
+                <h3 id="sync-heading-label">Synchronization</h3>
+                <span id="sync-title" class="section-state">Automatic</span>
+              </div>
+              <div class="toolbar">
+                <button id="pause-action" class="secondary" type="button">Pause</button>
+                <button id="sync-action" class="primary" type="button">Sync now</button>
+              </div>
+            </header>
             <div class="sync-timeline">
               <div><span>Schedule</span><strong id="ready-sync">Every 5 minutes</strong></div>
               <div><span>Last check</span><strong id="last-check">—</strong></div>
               <div><span>Next check</span><strong id="next-check">—</strong></div>
             </div>
-            <div id="last-diff" class="diff-strip" hidden></div>
+            <div class="diff-row">
+              <span class="row-label">Last change</span>
+              <div id="last-diff" class="diff-strip" hidden></div>
+            </div>
             <p id="ready-error" class="error" hidden></p>
-            <button id="sync-action" class="primary" type="button">Sync now</button>
           </section>
         </section>
 
@@ -102,14 +113,14 @@
       </div>
 
       <section id="journal-view" class="view activity-view" hidden aria-labelledby="activity-title">
-        <div class="activity-heading">
-          <div><span class="eyebrow">Vault Bridge</span><h2 id="activity-title">Activity</h2></div>
+        <header class="activity-heading">
+          <h2 id="activity-title">Activity</h2>
           <div class="filters" role="group" aria-label="Activity filter">
             <button class="filter active" type="button" data-filter="all">All</button>
             <button class="filter" type="button" data-filter="changes">Changes</button>
             <button class="filter" type="button" data-filter="errors">Errors</button>
           </div>
-        </div>
+        </header>
         <div class="activity-summary">
           <div><span>Last check</span><strong id="journal-last-check">—</strong></div>
           <div><span>Schedule</span><strong id="journal-schedule">—</strong></div>
@@ -152,15 +163,15 @@
     </dialog>
 
     <dialog id="settings-dialog">
-      <form method="dialog" class="sheet">
-        <div class="sheet-heading"><h2>Settings</h2><button class="icon quiet" value="cancel" aria-label="Close">×</button></div>
+      <form method="dialog" class="sheet settings-sheet">
+        <div class="sheet-heading"><h2>Settings</h2><button class="quiet close-button" value="cancel" aria-label="Close">Close</button></div>
         <label class="toggle"><input id="login-toggle" type="checkbox" checked /> Start at login</label>
         <div class="settings-actions">
           <button id="disconnect-action" class="secondary" type="button">Disconnect</button>
           <button id="remove-server-copy-action" class="danger" type="button">Remove server copy</button>
         </div>
         <p id="settings-error" class="error" hidden></p>
-        <button id="settings-close" class="secondary" type="submit">Done</button>
+        <div class="sheet-actions"><button id="settings-close" class="primary" type="submit">Done</button></div>
       </form>
     </dialog>
 

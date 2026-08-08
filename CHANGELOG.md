@@ -3,6 +3,23 @@
 All notable changes to Vault Bridge are documented here. The project follows
 semantic versioning while the public product contract is still evolving.
 
+## [0.1.1] - 2026-08-08
+
+### Changed
+
+- Rebuilt the desktop interface as a compact system utility with flat
+  connection rows, restrained status treatment, and a denser synchronization
+  panel.
+- Reworked Activity into a time-oriented operational log instead of a card and
+  chip dashboard.
+- Simplified settings, application icon, and project README.
+
+### Distribution status
+
+- Apple Silicon DMG and ZIP artifacts remain ad-hoc signed and are not Apple
+  notarized.
+- `v0.1.0` remains available as the immutable first public preview.
+
 ## [0.1.0] - 2026-08-08
 
 First public preview.
@@ -31,4 +48,5 @@ First public preview.
 - The supported current route is the Codex runbook or an inspected source
   build. Signed/notarized distribution is tracked in the public roadmap.
 
+[0.1.1]: https://github.com/kizz-tech/vault-mcp-bridge/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kizz-tech/vault-mcp-bridge/releases/tag/v0.1.0
