@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 import { IPC_CHANNELS, isAllowedExternalUrl, type IpcChannel } from "./security.js";
-import type { DesktopState, JournalEntry, ServerInput, VaultBridgeRendererApi } from "./types.js";
+import type { DesktopState, JournalEntry, ServerInput, TunnelInput, VaultBridgeRendererApi } from "./types.js";
 
 function invoke<T>(channel: Exclude<IpcChannel, "state:changed">, payload?: unknown): Promise<T> {
   return ipcRenderer.invoke(channel, payload) as Promise<T>;
@@ -11,6 +11,7 @@ const api: VaultBridgeRendererApi = Object.freeze({
   getState: () => invoke<DesktopState>("state:get"),
   chooseVault: () => invoke<DesktopState>("vault:choose"),
   configureServer: (input: ServerInput) => invoke<DesktopState>("server:configure", input),
+  configureTunnel: (input: TunnelInput) => invoke<DesktopState>("tunnel:configure", input),
   setup: () => invoke<DesktopState>("setup:start"),
   synchronize: () => invoke<DesktopState>("sync:now"),
   setPaused: (paused: boolean) => invoke<DesktopState>("sync:set-paused", paused),

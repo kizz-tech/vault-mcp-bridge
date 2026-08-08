@@ -1,5 +1,6 @@
 {
   "name": "@vault-mcp-bridge/desktop",
+  "productName": "Vault Bridge",
   "version": "0.1.0",
   "private": true,
   "description": "Vault Bridge macOS desktop shell",
@@ -32,6 +33,7 @@
   },
   "dependencies": {
     "@vault-mcp-bridge/agent-core": "workspace:*",
+    "@vault-mcp-bridge/agent": "workspace:*",
     "@vault-mcp-bridge/contracts": "workspace:*",
     "@vault-mcp-bridge/deployment": "workspace:*",
     "@vault-mcp-bridge/orchestrator": "workspace:*",

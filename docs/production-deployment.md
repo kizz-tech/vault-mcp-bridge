@@ -1,5 +1,9 @@
 # Production deployment
 
+> This document covers the advanced public HTTPS/OAuth deployment. The default
+> personal product uses OpenAI Secure MCP Tunnel; see
+> [`deploy/secure-tunnel/README.md`](../deploy/secure-tunnel/README.md).
+
 This runbook is the contract for a real installation. The desktop app owns
 the normal flow; the operator supplies an approved Linux/SSH target and the
 managed or self-hosted edge inputs. A successful local build, Compose parse,

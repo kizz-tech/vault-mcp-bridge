@@ -1,5 +1,5 @@
 import { EMPTY_STATE } from "../types.js";
-import type { DesktopState, JournalEntry, ServerInput, VaultBridgeRendererApi } from "../types.js";
+import type { DesktopState, JournalEntry, ServerInput, TunnelInput, VaultBridgeRendererApi } from "../types.js";
 
 declare global {
   interface Window {
@@ -15,6 +15,9 @@ const elements = {
   serverValue: required<HTMLElement>("server-value"),
   vaultAction: required<HTMLButtonElement>("vault-action"),
   serverAction: required<HTMLButtonElement>("server-action"),
+  tunnelRow: required<HTMLElement>("tunnel-row"),
+  tunnelValue: required<HTMLElement>("tunnel-value"),
+  tunnelAction: required<HTMLButtonElement>("tunnel-action"),
   setupAction: required<HTMLButtonElement>("setup-action"),
   onboardingError: required<HTMLElement>("onboarding-error"),
   statusPill: required<HTMLElement>("status-pill"),
@@ -36,6 +39,13 @@ const elements = {
   serverHost: required<HTMLInputElement>("server-host"),
   serverUser: required<HTMLInputElement>("server-user"),
   serverPort: required<HTMLInputElement>("server-port"),
+  tunnelDialog: required<HTMLDialogElement>("tunnel-dialog"),
+  tunnelForm: required<HTMLFormElement>("tunnel-form"),
+  tunnelCancel: required<HTMLButtonElement>("tunnel-cancel"),
+  tunnelId: required<HTMLInputElement>("tunnel-id"),
+  tunnelKey: required<HTMLInputElement>("tunnel-key"),
+  openTunnels: required<HTMLButtonElement>("open-tunnels"),
+  openApiKeys: required<HTMLButtonElement>("open-api-keys"),
   journalButton: required<HTMLButtonElement>("journal-button"),
   journalDialog: required<HTMLDialogElement>("journal-dialog"),
   journalClose: required<HTMLButtonElement>("journal-close"),
@@ -52,7 +62,7 @@ let currentState: DesktopState = { ...EMPTY_STATE };
 
 function render(state: DesktopState): void {
   currentState = state;
-  const hasSetupInputs = Boolean(state.vault && state.server);
+  const hasSetupInputs = Boolean(state.vault && state.server && (!state.requiresTunnelConfig || state.tunnel));
   const ready = state.mode === "ready" || state.mode === "synchronizing";
   elements.onboarding.hidden = ready;
   elements.ready.hidden = !ready;
@@ -63,7 +73,9 @@ function render(state: DesktopState): void {
     : "Not selected";
   elements.serverValue.textContent = state.server?.label ?? "Not configured";
   if (state.server && state.serverCopy === "retained") elements.serverValue.textContent += " · copy retained";
-  elements.setupAction.disabled = !hasSetupInputs || state.mode === "synchronizing" || state.serverCopy === "retained" || state.serverCopy === "unknown";
+  elements.tunnelRow.hidden = !state.requiresTunnelConfig;
+  elements.tunnelValue.textContent = state.tunnel?.configured ? "Configured" : "Not configured";
+  elements.setupAction.disabled = !hasSetupInputs || state.mode === "synchronizing" || (!state.requiresTunnelConfig && state.serverCopy === "retained") || state.serverCopy === "unknown";
   elements.setupAction.textContent = state.mode === "synchronizing" ? statusText(state.phase) : "Set up";
 
   const status = state.mode === "synchronizing" ? "Synchronizing" : state.mode === "attention" ? "Needs attention" : "Ready";
@@ -74,6 +86,7 @@ function render(state: DesktopState): void {
     : "";
   elements.readyServer.textContent = state.server?.label ?? "Not configured";
   elements.readyChatGpt.textContent = state.mcp?.host ?? "Not configured";
+  elements.chatGptAction.textContent = state.requiresTunnelConfig ? "Open ChatGPT" : "Copy URL & Open";
   elements.readySync.textContent = state.paused ? "Paused" : "Automatic";
   elements.pauseAction.textContent = state.paused ? "Resume" : "Pause";
   elements.syncAction.disabled = state.mode === "synchronizing" || state.paused;
@@ -100,6 +113,12 @@ function openServerDialog(): void {
   elements.serverDialog.showModal();
 }
 
+function openTunnelDialog(): void {
+  elements.tunnelId.value = "";
+  elements.tunnelKey.value = "";
+  elements.tunnelDialog.showModal();
+}
+
 async function configureServer(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   const input: ServerInput = {
@@ -109,6 +128,17 @@ async function configureServer(event: SubmitEvent): Promise<void> {
   };
   await run(async () => bridge.configureServer(input), elements.onboardingError);
   if (!elements.onboardingError.textContent) elements.serverDialog.close();
+}
+
+async function configureTunnel(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const input: TunnelInput = {
+    tunnelId: elements.tunnelId.value.trim(),
+    apiKey: elements.tunnelKey.value.trim()
+  };
+  await run(async () => bridge.configureTunnel(input), elements.onboardingError);
+  elements.tunnelKey.value = "";
+  if (!elements.onboardingError.textContent) elements.tunnelDialog.close();
 }
 
 async function startSetup(): Promise<void> {
@@ -134,8 +164,10 @@ async function openJournal(): Promise<void> {
 async function connectChatGpt(): Promise<void> {
   await run(async () => bridge.connectChatGpt(), elements.readyError);
   if (!elements.readyError.textContent) {
-    elements.chatGptAction.textContent = "Copied";
-    window.setTimeout(() => { elements.chatGptAction.textContent = "Copy URL & Open"; }, 2_000);
+    if (!currentState.requiresTunnelConfig) {
+      elements.chatGptAction.textContent = "Copied";
+      window.setTimeout(() => { elements.chatGptAction.textContent = "Copy URL & Open"; }, 2_000);
+    }
   }
 }
 
@@ -218,6 +250,7 @@ function attentionActionText(action: NonNullable<DesktopState["attention"]>["act
   switch (action) {
     case "choose-vault": return "Choose";
     case "change-server": return "Change connection";
+    case "configure-tunnel": return "Configure";
     case "review-fingerprint": return "Review fingerprint";
     case "connect": return "Connect";
     case "limits": return "Limits";
@@ -256,6 +289,7 @@ function required<T extends Element>(id: string): T {
 
 elements.vaultAction.addEventListener("click", () => void chooseVault());
 elements.serverAction.addEventListener("click", openServerDialog);
+elements.tunnelAction.addEventListener("click", openTunnelDialog);
 elements.readyServerAction.addEventListener("click", () => elements.settingsDialog.showModal());
 elements.setupAction.addEventListener("click", () => void startSetup());
 elements.syncAction.addEventListener("click", () => void synchronize());
@@ -263,6 +297,10 @@ elements.pauseAction.addEventListener("click", () => void togglePause());
 elements.chatGptAction.addEventListener("click", () => void connectChatGpt());
 elements.serverCancel.addEventListener("click", () => elements.serverDialog.close());
 elements.serverForm.addEventListener("submit", (event) => void configureServer(event));
+elements.tunnelCancel.addEventListener("click", () => elements.tunnelDialog.close());
+elements.tunnelForm.addEventListener("submit", (event) => void configureTunnel(event));
+elements.openTunnels.addEventListener("click", () => void bridge.openExternal("https://platform.openai.com/settings/organization/tunnels"));
+elements.openApiKeys.addEventListener("click", () => void bridge.openExternal("https://platform.openai.com/settings/organization/api-keys"));
 elements.journalButton.addEventListener("click", () => void openJournal());
 elements.journalClose.addEventListener("click", () => elements.journalDialog.close());
 elements.menuButton.addEventListener("click", () => elements.settingsDialog.showModal());
@@ -273,6 +311,7 @@ elements.attentionAction.addEventListener("click", () => {
   switch (currentState.attention?.action) {
     case "choose-vault": void chooseVault(); break;
     case "change-server": openServerDialog(); break;
+    case "configure-tunnel": openTunnelDialog(); break;
     case "connect": void connectOwner(); break;
     case "review-fingerprint": openServerDialog(); break;
     default: void startSetup();

@@ -1,22 +1,31 @@
 # Vault Bridge desktop
 
-The macOS desktop shell is one Electron application. The renderer is loaded
-from the packaged `vaultbridge://app` origin; it does not start a localhost web
-server and cannot access Node APIs.
+The macOS desktop is the normal product surface. Its single setup screen owns
+vault selection, SSH configuration, OpenAI Secure MCP Tunnel configuration,
+deployment, synchronization, and lifecycle.
 
 ```sh
 pnpm --filter @vault-mcp-bridge/desktop build
-pnpm --filter @vault-mcp-bridge/desktop dev
+pnpm --filter @vault-mcp-bridge/desktop start
 pnpm --filter @vault-mcp-bridge/desktop test
 pnpm --filter @vault-mcp-bridge/desktop package
 ```
 
-`DesktopBackend` is the narrow integration port for the setup orchestrator. The
-default backend provides a local, read-only preview and a safe placeholder when
-the orchestrator is not injected. The packaged app uses the system OpenSSH
-client through `spawn` with fixed arguments; it never stores private keys or
-passes command strings through a shell.
+The renderer loads from `vaultbridge://app`. It has no localhost server, Node
+integration, filesystem access, secret access, web navigation, or webviews.
+The Electron main process owns the native picker, scanner, safeStorage,
+OpenSSH/SFTP, Docker deployment, scheduler, and lifecycle.
 
-Unsigned artifacts are suitable for local testing only. Distribution requires
-Developer ID signing and notarization credentials supplied through the Forge
-environment; no credentials belong in this repository.
+Development accepts `VAULT_BRIDGE_SECURE_TUNNEL_IMAGE` with an explicit local
+tag. Packaged production builds require a digest-pinned
+`secure-tunnel-config.json` supplied through
+`VAULT_BRIDGE_SECURE_TUNNEL_CONFIG_PATH`. This public file contains only the
+image reference and sync interval. Tunnel IDs and runtime keys are entered by
+the owner and stored outside the bundle.
+
+The older `product-config.json` path selects the advanced public HTTPS/OAuth
+backend. It is not required for the default private Secure Tunnel product.
+
+Unsigned artifacts are for local testing. Public macOS distribution requires
+Developer ID signing and notarization credentials supplied outside source
+control.

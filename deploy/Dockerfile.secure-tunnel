@@ -1,0 +1,88 @@
+# OpenAI publishes signed release archives for tunnel-client. The exact
+# version and per-architecture SHA-256 values are pinned so this build never
+# follows a mutable registry tag.
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
+FROM ${NODE_IMAGE} AS build
+
+ENV COREPACK_HOME=/tmp/corepack
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+WORKDIR /workspace
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY apps/server/package.json apps/server/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/vault-core/package.json packages/vault-core/package.json
+RUN pnpm install --frozen-lockfile
+
+COPY apps/server apps/server
+COPY packages/contracts packages/contracts
+COPY packages/vault-core packages/vault-core
+COPY tsconfig.base.json eslint.config.mjs vitest.config.ts ./
+RUN pnpm --filter @vault-mcp-bridge/server... build
+RUN pnpm --filter @vault-mcp-bridge/server deploy --prod --legacy /out
+
+ARG TUNNEL_CLIENT_VERSION=v0.0.11
+ARG TUNNEL_CLIENT_SHA256_AMD64=29adfe5c1399dfb9fda9383f230c324355912f50dc36e2e416b1f1322317b3c4
+ARG TUNNEL_CLIENT_SHA256_ARM64=d8bba47b2a723799a372b0b87d7e4d69304093d3a28837237315fe5406d97e77
+ARG TARGETARCH
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends ca-certificates curl unzip \
+  && case "${TARGETARCH}" in \
+       amd64) archive_sha="${TUNNEL_CLIENT_SHA256_AMD64}" ;; \
+       arm64) archive_sha="${TUNNEL_CLIENT_SHA256_ARM64}" ;; \
+       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+     esac \
+  && archive="tunnel-client-${TUNNEL_CLIENT_VERSION}-linux-${TARGETARCH}.zip" \
+  && curl --fail --location --proto '=https' --tlsv1.2 \
+       "https://github.com/openai/tunnel-client/releases/download/${TUNNEL_CLIENT_VERSION}/${archive}" \
+       --output "/tmp/${archive}" \
+  && printf '%s  %s\n' "${archive_sha}" "/tmp/${archive}" | sha256sum --check --strict \
+  && mkdir -p /opt/tunnel-client \
+  && unzip -q "/tmp/${archive}" tunnel-client cloudflared LICENSE -d /opt/tunnel-client \
+  && chmod 0555 /opt/tunnel-client/tunnel-client /opt/tunnel-client/cloudflared \
+  && rm -rf /var/lib/apt/lists/* "/tmp/${archive}"
+
+ARG NODE_IMAGE
+FROM ${NODE_IMAGE} AS runtime
+
+ARG BUILD_DATE=""
+ARG SOURCE="https://github.com/kizz-tech/vault-mcp-bridge"
+ARG VCS_REF=""
+ARG VERSION="0.1.0"
+LABEL org.opencontainers.image.title="Vault Bridge Secure MCP Tunnel" \
+      org.opencontainers.image.description="Private, outbound-only, read-only Obsidian vault bridge for ChatGPT" \
+      org.opencontainers.image.source=$SOURCE \
+      org.opencontainers.image.created=$BUILD_DATE \
+      org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+ENV NODE_ENV=production \
+    HOME=/tmp \
+    XDG_CONFIG_HOME=/tmp/config \
+    SERVER_DATABASE_PATH=/var/lib/vault-mcp-bridge/vault.sqlite \
+    MCP_STDIO_PRIVATE_TUNNEL=1 \
+    PRIVATE_SNAPSHOT_IMPORT=1 \
+    MCP_COMMAND="node /app/dist/stdio.js" \
+    CLOUDFLARED_PATH=/opt/tunnel-client/cloudflared \
+    HEALTH_LISTEN_ADDR=127.0.0.1:8080 \
+    LOG_LEVEL=info \
+    LOG_FORMAT=json \
+    LOG_HTTP_RAW_UNSAFE=false
+
+RUN groupadd --system --gid 10001 bridge \
+  && useradd --system --uid 10001 --gid bridge --home-dir /nonexistent --shell /usr/sbin/nologin bridge \
+  && mkdir -p /var/lib/vault-mcp-bridge \
+  && chown -R bridge:bridge /var/lib/vault-mcp-bridge
+WORKDIR /app
+COPY --from=build --chown=bridge:bridge /out/ ./
+COPY --from=build --chown=root:root /opt/tunnel-client /opt/tunnel-client
+# The slim Node runtime relies on Node's embedded CA set and does not ship the
+# system bundle that the Go tunnel-client loads. Copy the Debian-maintained
+# bundle from the pinned build stage; never disable TLS verification.
+COPY --from=build --chown=root:root /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+USER bridge
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
+  CMD node --input-type=module -e "const r=await fetch('http://127.0.0.1:8080/readyz'); if(!r.ok) process.exit(1)"
+ENTRYPOINT ["/opt/tunnel-client/tunnel-client", "run", "--control-plane.api-key=file:/run/secrets/control-plane-api-key"]

@@ -1,0 +1,84 @@
+name: ${COMPOSE_PROJECT_NAME:-vault-bridge}
+
+services:
+  runtime:
+    image: ${VAULT_BRIDGE_IMAGE:-vault-mcp-bridge-secure-tunnel:local}
+    user: "10001:10001"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 192
+    mem_limit: 768m
+    cpus: "1.0"
+    depends_on:
+      runtime_secrets_init:
+        condition: service_completed_successfully
+    environment:
+      CONTROL_PLANE_TUNNEL_ID: ${CONTROL_PLANE_TUNNEL_ID:?CONTROL_PLANE_TUNNEL_ID is required}
+      MCP_VAULT_ID: ${MCP_VAULT_ID:?MCP_VAULT_ID is required}
+      MAX_SNAPSHOT_BYTES: ${MAX_SNAPSHOT_BYTES:-67108864}
+      MAX_VAULT_BYTES: ${MAX_VAULT_BYTES:-536870912}
+      MAX_DATABASE_BYTES: ${MAX_DATABASE_BYTES:-2147483648}
+      MAX_INDEX_BYTES: ${MAX_INDEX_BYTES:-1073741824}
+      MAX_TEMP_BYTES: ${MAX_TEMP_BYTES:-134217728}
+      MIN_FREE_BYTES: ${MIN_FREE_BYTES:-268435456}
+      MAX_RETAINED_GENERATIONS: ${MAX_RETAINED_GENERATIONS:-2}
+    volumes:
+      - replica_data:/var/lib/vault-mcp-bridge
+      - runtime_secrets:/run/secrets:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    logging:
+      driver: json-file
+      options:
+        max-size: 8m
+        max-file: "3"
+    labels:
+      com.vault-mcp-bridge.component: secure-tunnel-runtime
+
+  runtime_secrets_init:
+    image: ${VAULT_BRIDGE_IMAGE:-vault-mcp-bridge-secure-tunnel:local}
+    user: "0:0"
+    init: true
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    security_opt:
+      - no-new-privileges:true
+    entrypoint: [node]
+    command:
+      - --input-type=module
+      - -e
+      - |-
+        import { chmod, chown, copyFile, mkdir, rm } from 'node:fs/promises';
+        await mkdir('/out', { recursive: true });
+        await rm('/out/control-plane-api-key', { force: true });
+        await copyFile('/run/secrets/control-plane-api-key', '/out/control-plane-api-key');
+        await chmod('/out/control-plane-api-key', 0o400);
+        await chown('/out/control-plane-api-key', 10001, 10001);
+    volumes:
+      - runtime_secrets:/out:rw
+    secrets:
+      - source: control_plane_api_key
+        target: control-plane-api-key
+    network_mode: none
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    labels:
+      com.vault-mcp-bridge.component: secure-tunnel-secret-init
+
+volumes:
+  replica_data:
+    labels:
+      com.vault-mcp-bridge.component: replica
+  runtime_secrets:
+    labels:
+      com.vault-mcp-bridge.component: runtime-secrets
+
+secrets:
+  control_plane_api_key:
+    file: ./secrets/control-plane-api-key

@@ -11,6 +11,12 @@ const productConfigPath = process.env.VAULT_BRIDGE_PRODUCT_CONFIG_PATH
 if (productConfigPath && path.basename(productConfigPath) !== "product-config.json") {
   throw new Error("VAULT_BRIDGE_PRODUCT_CONFIG_PATH must end in product-config.json");
 }
+const secureTunnelConfigPath = process.env.VAULT_BRIDGE_SECURE_TUNNEL_CONFIG_PATH
+  ? path.resolve(process.env.VAULT_BRIDGE_SECURE_TUNNEL_CONFIG_PATH)
+  : undefined;
+if (secureTunnelConfigPath && path.basename(secureTunnelConfigPath) !== "secure-tunnel-config.json") {
+  throw new Error("VAULT_BRIDGE_SECURE_TUNNEL_CONFIG_PATH must end in secure-tunnel-config.json");
+}
 
 module.exports = {
   packagerConfig: {
@@ -34,7 +40,9 @@ module.exports = {
         NSAllowsArbitraryLoads: false
       }
     },
-    ...(productConfigPath ? { extraResource: [productConfigPath] } : {}),
+    ...((productConfigPath || secureTunnelConfigPath)
+      ? { extraResource: [productConfigPath, secureTunnelConfigPath].filter(Boolean) }
+      : {}),
     osxSign: process.env.VAULT_BRIDGE_OSX_SIGN_IDENTITY
       ? { identity: process.env.VAULT_BRIDGE_OSX_SIGN_IDENTITY }
       : undefined,

@@ -388,6 +388,33 @@ export class VaultStore {
     return Number(result.changes) === 1;
   }
 
+  /**
+   * Provision the non-network identity used only by the fixed private import
+   * command. It cannot authenticate to the signed publisher HTTP surface.
+   */
+  ensurePrivateImportDevice(deviceId: string, vaultId: string): void {
+    const marker = Buffer.from("vault-mcp-bridge:private-import:v1", "utf8");
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.statement("SELECT vault_id, public_key, name, revoked_at FROM devices WHERE device_id = ?").get(deviceId) as Record<string, unknown> | undefined;
+      if (existing) {
+        const matches = String(existing.vault_id) === vaultId
+          && Buffer.from(existing.public_key as Uint8Array).equals(marker)
+          && existing.name === "Private tunnel importer"
+          && existing.revoked_at === null;
+        if (!matches) throw new SnapshotError("private import device conflicts with an existing identity", 409);
+        this.db.exec("COMMIT");
+        return;
+      }
+      this.statement("INSERT INTO devices(device_id, vault_id, public_key, name, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run(deviceId, vaultId, marker, "Private tunnel importer", nowSeconds());
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   consumeNonce(deviceId: string, nonce: string): boolean {
     try {
       const now = nowSeconds();

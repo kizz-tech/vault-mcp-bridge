@@ -3,12 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/private-sync.ts",
+      "import": "./dist/src/private-sync.js"
+    }
+  },
   "engines": {
     "node": ">=24.0.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/main.ts",
+    "private-sync": "tsx src/private-sync-main.ts",
     "lint": "eslint src tests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"

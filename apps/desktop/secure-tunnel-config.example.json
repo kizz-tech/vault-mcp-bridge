@@ -1,0 +1,4 @@
+{
+  "image": "ghcr.io/kizz-tech/vault-mcp-bridge-secure-tunnel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "syncIntervalMinutes": 5
+}

@@ -31,6 +31,15 @@ export interface ServerSummary {
   connected: boolean;
 }
 
+export interface TunnelInput {
+  tunnelId: string;
+  apiKey: string;
+}
+
+export interface TunnelSummary {
+  configured: boolean;
+}
+
 export interface AttentionState {
   code:
     | "vault-missing"
@@ -42,9 +51,10 @@ export interface AttentionState {
     | "sync-blocked"
     | "server-offline"
     | "oauth-not-linked"
+    | "tunnel-not-configured"
     | "orchestrator-unavailable";
   message: string;
-  action: "choose-vault" | "change-server" | "review-fingerprint" | "retry" | "connect" | "limits";
+  action: "choose-vault" | "change-server" | "configure-tunnel" | "review-fingerprint" | "retry" | "connect" | "limits";
 }
 
 export interface McpConnection {
@@ -57,6 +67,8 @@ export interface DesktopState {
   phase: SetupPhase;
   vault: VaultSummary | null;
   server: ServerSummary | null;
+  tunnel: TunnelSummary | null;
+  requiresTunnelConfig: boolean;
   mcp: McpConnection | null;
   paused: boolean;
   lastPublishedAt: string | null;
@@ -77,6 +89,7 @@ export interface DesktopBackend {
   getState(): Promise<DesktopState>;
   selectVault(root: string): Promise<VaultSummary>;
   configureServer(input: ServerInput): Promise<ServerSummary>;
+  configureTunnel?(input: TunnelInput): Promise<TunnelSummary>;
   setup(): Promise<DesktopState>;
   synchronize(): Promise<DesktopState>;
   setPaused(paused: boolean): Promise<DesktopState>;
@@ -94,6 +107,7 @@ export interface VaultBridgeRendererApi {
   getState(): Promise<DesktopState>;
   chooseVault(): Promise<DesktopState>;
   configureServer(input: ServerInput): Promise<DesktopState>;
+  configureTunnel(input: TunnelInput): Promise<DesktopState>;
   setup(): Promise<DesktopState>;
   synchronize(): Promise<DesktopState>;
   setPaused(paused: boolean): Promise<DesktopState>;
@@ -115,6 +129,8 @@ export const EMPTY_STATE: DesktopState = Object.freeze({
   phase: "idle",
   vault: null,
   server: null,
+  tunnel: null,
+  requiresTunnelConfig: true,
   mcp: null,
   paused: false,
   lastPublishedAt: null,
@@ -127,6 +143,7 @@ export function cloneState(state: DesktopState): DesktopState {
     ...state,
     vault: state.vault ? { ...state.vault } : null,
     server: state.server ? { ...state.server } : null,
+    tunnel: state.tunnel ? { ...state.tunnel } : null,
     mcp: state.mcp ? { ...state.mcp } : null,
     attention: state.attention ? { ...state.attention } : null
   };

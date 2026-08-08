@@ -4,18 +4,21 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { NativeOAuthClient, SafeStorageOwnerTokenProvider } from "./oauth-client.js";
+import { PrivateDesktopBackend } from "./private-backend.js";
 import { ProductDesktopBackend } from "./product-backend.js";
 import { loadProductConfig } from "./product-config.js";
 import { MacPublisherIdentityProvider } from "./publisher-identity.js";
 import { SafeStorageSecretStore } from "./secret-store.js";
+import { loadSecureTunnelProductConfig } from "./secure-tunnel-config.js";
 import { assertTrustedSender, isAllowedExternalUrl, isAllowedMcpResourceUrl, isIpcChannel, isWithinDirectory, safeIpcError } from "./security.js";
 import { OpenSshAdapter } from "./ssh.js";
-import type { DesktopBackend, ServerInput } from "./types.js";
+import type { DesktopBackend, ServerInput, TunnelInput } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_SCHEME = "vaultbridge";
 const APP_HOST = "app";
 
+app.setName("Vault Bridge");
 app.enableSandbox();
 protocol.registerSchemesAsPrivileged([
   {
@@ -124,6 +127,18 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions = {}): Deskt
         throw safeIpcError(error);
       }
     });
+    ipcMain.handle("tunnel:configure", async (event, payload: unknown) => {
+      assertSender(event);
+      const configure = currentBackend().configureTunnel;
+      if (!configure) throw safeIpcError(new Error("Secure tunnel configuration unavailable"));
+      const input = parseTunnelInput(payload);
+      try {
+        await configure.call(currentBackend(), input);
+        return currentBackend().getState();
+      } catch (error) {
+        throw safeIpcError(error);
+      }
+    });
     ipcMain.handle("setup:start", async (event) => {
       assertSender(event);
       return currentBackend().setup();
@@ -151,9 +166,11 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions = {}): Deskt
       assertSender(event);
       try {
         const state = await currentBackend().getState();
-        const resourceUrl = state.mcp?.resourceUrl;
-        if (!resourceUrl || !isAllowedMcpResourceUrl(resourceUrl)) throw new Error("MCP endpoint unavailable");
-        clipboard.writeText(resourceUrl);
+        if (!state.requiresTunnelConfig) {
+          const resourceUrl = state.mcp?.resourceUrl;
+          if (!resourceUrl || !isAllowedMcpResourceUrl(resourceUrl)) throw new Error("MCP endpoint unavailable");
+          clipboard.writeText(resourceUrl);
+        }
         return await currentBackend().connectChatGpt();
       } catch (error) {
         throw safeIpcError(error);
@@ -226,6 +243,7 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions = {}): Deskt
       "state:get",
       "vault:choose",
       "server:configure",
+      "tunnel:configure",
       "setup:start",
       "sync:now",
       "sync:set-paused",
@@ -278,7 +296,7 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions = {}): Deskt
       await app.whenReady();
       if (!backend) {
         const secretStore = new SafeStorageSecretStore(join(app.getPath("userData"), "secrets.json"), safeStorage);
-        const config = await loadProductConfig({
+        const productConfig = await loadProductConfig({
           filePaths: [
             join(app.getPath("userData"), "product-config.json"),
             join(process.resourcesPath, "product-config.json")
@@ -286,34 +304,54 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions = {}): Deskt
           allowLoopback: !app.isPackaged && process.env.NODE_ENV !== "production"
         });
         const browser = { openExternal: (url: string) => shell.openExternal(url) };
-        const oauth = config
-          ? new NativeOAuthClient(config, secretStore, browser)
-          : undefined;
-        const ownerTokens = oauth ?? new SafeStorageOwnerTokenProvider(secretStore);
-        backend = new ProductDesktopBackend({
-          appDataPath: app.getPath("userData"),
-          ...(config ? { config } : {}),
-          secretStore,
-          ownerTokens,
-          browser,
-          publisherIdentity: new MacPublisherIdentityProvider(secretStore),
-          ...(oauth ? { oauth } : {}),
-          ssh: new OpenSshAdapter(undefined, join(app.getPath("userData"), "ssh", "known_hosts")),
-          confirmation: {
-            async confirm(fingerprint, target) {
-              const result = await dialog.showMessageBox({
-                type: "question",
-                buttons: ["Cancel", "Trust"],
-                defaultId: 0,
-                cancelId: 0,
-                title: "Verify server",
-                message: `${target.user}@${target.host}`,
-                detail: fingerprint
-              });
-              return result.response === 1;
-            }
+        const confirmation = {
+          async confirm(fingerprint: string, target: { user: string; host: string }) {
+            const result = await dialog.showMessageBox({
+              type: "question",
+              buttons: ["Cancel", "Trust"],
+              defaultId: 0,
+              cancelId: 0,
+              title: "Verify server",
+              message: `${target.user}@${target.host}`,
+              detail: fingerprint
+            });
+            return result.response === 1;
           }
-        });
+        };
+        if (productConfig) {
+          const oauth = new NativeOAuthClient(productConfig, secretStore, browser);
+          backend = new ProductDesktopBackend({
+            appDataPath: app.getPath("userData"),
+            config: productConfig,
+            secretStore,
+            ownerTokens: oauth ?? new SafeStorageOwnerTokenProvider(secretStore),
+            browser,
+            publisherIdentity: new MacPublisherIdentityProvider(secretStore),
+            oauth,
+            ssh: new OpenSshAdapter(undefined, join(app.getPath("userData"), "ssh", "known_hosts")),
+            confirmation
+          });
+        } else {
+          const secureConfig = await loadSecureTunnelProductConfig({
+            filePaths: [
+              join(app.getPath("userData"), "secure-tunnel-config.json"),
+              join(process.resourcesPath, "secure-tunnel-config.json")
+            ],
+            allowMutableImage: !app.isPackaged && process.env.NODE_ENV !== "production"
+          }) ?? (!app.isPackaged
+            ? { image: "vault-mcp-bridge-secure-tunnel:local", syncIntervalMinutes: 5 }
+            : undefined);
+          if (!secureConfig) throw new Error("Secure tunnel product configuration is missing");
+          backend = new PrivateDesktopBackend({
+            appDataPath: app.getPath("userData"),
+            config: secureConfig,
+            composeTemplatePath: join(__dirname, "assets", "secure-tunnel-compose.yaml"),
+            secretStore,
+            browser,
+            ssh: new OpenSshAdapter(undefined, join(app.getPath("userData"), "ssh", "known_hosts")),
+            confirmation
+          });
+        }
       }
       registerProtocol();
       registerIpc();
@@ -352,6 +390,15 @@ function parseServerInput(payload: unknown): ServerInput {
     throw new TypeError("Invalid server input");
   }
   return { host: candidate.host, user: candidate.user, port: candidate.port };
+}
+
+function parseTunnelInput(payload: unknown): TunnelInput {
+  if (!payload || typeof payload !== "object") throw new TypeError("Invalid tunnel input");
+  const candidate = payload as Partial<TunnelInput>;
+  if (typeof candidate.tunnelId !== "string" || typeof candidate.apiKey !== "string") {
+    throw new TypeError("Invalid tunnel input");
+  }
+  return { tunnelId: candidate.tunnelId, apiKey: candidate.apiKey };
 }
 
 function mimeType(path: string): string {

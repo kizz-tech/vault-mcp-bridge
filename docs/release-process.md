@@ -18,6 +18,7 @@ pnpm test
 pnpm build
 node scripts/validate-release.mjs
 node scripts/validate-compose.mjs deploy/runtime/compose.contract.yaml --strict
+node scripts/validate-secure-tunnel-compose.mjs
 ```
 
 The aggregate `pnpm check` runs these repository checks plus release and
@@ -51,16 +52,38 @@ Do not place any of those values in source, `.env`, manifests, or logs.
 The absence of those credentials is an intentional fail-closed result, not a
 reason to call an unsigned package signed or notarized.
 
-The desktop loads non-secret product configuration in this order: `VAULT_BRIDGE_*`
-environment variables, then `product-config.json` in Electron `userData`, then
-`product-config.json` in packaged resources. Forge embeds a public file only
-when `VAULT_BRIDGE_PRODUCT_CONFIG_PATH` points to a file named
-`product-config.json`; it must not contain tokens, private keys, or lease
-material. Without real managed-edge/OIDC/image-digest inputs the current
-release candidate is intentionally unconfigured. A clean-install one-launch
-claim therefore requires a separately recorded configured packaged smoke.
+The default desktop loads non-secret Secure Tunnel configuration from
+`VAULT_BRIDGE_SECURE_TUNNEL_IMAGE`, then `secure-tunnel-config.json` in
+Electron `userData`, then the packaged resources directory. Production image
+references must be digest-pinned. Forge embeds this public file only when
+`VAULT_BRIDGE_SECURE_TUNNEL_CONFIG_PATH` points to a file named
+`secure-tunnel-config.json`. The file contains no tunnel ID or API key.
+
+`VAULT_BRIDGE_PRODUCT_CONFIG_PATH=product-config.json` remains the separate
+advanced public HTTPS/OAuth build. Never embed both release modes in one
+artifact. A clean-install claim requires a packaged smoke with the chosen
+public configuration and synthetic data.
 
 ## Container artifacts
+
+The default image combines the read-only stdio MCP server and the official
+OpenAI tunnel client:
+
+```sh
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --file deploy/Dockerfile.secure-tunnel \
+  --tag ghcr.io/<owner>/vault-mcp-bridge-secure-tunnel:<version> \
+  --push .
+```
+
+Record the resulting multi-platform manifest digest and place only
+`repository@sha256:<digest>` in `secure-tunnel-config.json`. The image build
+pins the Node base, tunnel-client version, and per-architecture release archive
+SHA-256. The primary Compose template has one long-running runtime, one
+network-disabled secret-init job, no host ports, and two named volumes.
+
+The sections below describe the advanced public server + edge images.
 
 The server and edge images use their respective pinned base images and
 Dockerfiles:
@@ -85,8 +108,9 @@ SSH/SFTP-uploaded source files are `0600`, copied into per-runtime named volumes
 with exact UID/GID and default copy mode `0440`, and mounted read-only by the
 owning service. Generated Compose must pass
 `node scripts/validate-compose.mjs deploy/runtime/compose.contract.yaml --strict`
-as a contract fixture and the deployment package's tests. The fixture is not a
-deployable production file.
+as an advanced-mode contract fixture. The primary template must also pass
+`node scripts/validate-secure-tunnel-compose.mjs`. Neither validation starts a
+container.
 
 ## Secret-free release manifest
 

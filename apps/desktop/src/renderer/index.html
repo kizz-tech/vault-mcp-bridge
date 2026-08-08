@@ -33,6 +33,11 @@
             <span id="server-value" class="value">Not configured</span>
             <button id="server-action" class="secondary" type="button">Add</button>
           </div>
+          <div id="tunnel-row" class="row">
+            <span class="label">OpenAI</span>
+            <span id="tunnel-value" class="value">Not configured</span>
+            <button id="tunnel-action" class="secondary" type="button">Add</button>
+          </div>
         </div>
         <p id="onboarding-error" class="error" hidden></p>
         <button id="setup-action" class="primary" type="button" disabled>Set up</button>
@@ -53,7 +58,7 @@
           <div class="row">
             <span class="label">ChatGPT</span>
             <span id="ready-chatgpt" class="value">Not configured</span>
-            <button id="chatgpt-action" class="secondary" type="button">Copy URL &amp; Open</button>
+            <button id="chatgpt-action" class="secondary" type="button">Open ChatGPT</button>
           </div>
           <div class="row">
             <span class="label">Sync</span>
@@ -80,6 +85,24 @@
         <div class="sheet-actions">
           <button id="server-cancel" class="secondary" type="button">Cancel</button>
           <button class="primary" type="submit">Connect</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="tunnel-dialog">
+      <form id="tunnel-form" method="dialog" class="sheet">
+        <div class="sheet-heading">
+          <h2>OpenAI</h2>
+          <div class="sheet-links">
+            <button id="open-tunnels" class="quiet" type="button">Tunnels</button>
+            <button id="open-api-keys" class="quiet" type="button">API keys</button>
+          </div>
+        </div>
+        <label>Tunnel ID <input id="tunnel-id" name="tunnel-id" autocomplete="off" spellcheck="false" required /></label>
+        <label>Runtime API key <input id="tunnel-key" name="tunnel-key" type="password" autocomplete="off" spellcheck="false" required /></label>
+        <div class="sheet-actions">
+          <button id="tunnel-cancel" class="secondary" type="button">Cancel</button>
+          <button class="primary" type="submit">Save</button>
         </div>
       </form>
     </dialog>

@@ -817,7 +817,7 @@ async function boundedJson(response: Response): Promise<unknown> {
 }
 
 export class ProductDesktopBackend implements DesktopLifecycleBackend {
-  private state = cloneState(EMPTY_STATE);
+  private state = { ...cloneState(EMPTY_STATE), requiresTunnelConfig: false };
   private vaultRoot: string | undefined;
   private serverInput: ServerInput | undefined;
   private readonly listeners = new Set<(state: DesktopState) => void>();

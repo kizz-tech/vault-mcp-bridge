@@ -29,8 +29,8 @@ export function parseFrontmatter(text: string): FrontmatterResult {
   }
   const body = text.slice(openingEnd, closing.index);
   try {
-    const document = parseDocument(body, { schema: "core", strict: true });
-    if (document.errors.length > 0) {
+    const document = parseDocument(body, { schema: "core", strict: true, logLevel: "silent" });
+    if (document.errors.length > 0 || document.warnings.length > 0) {
       return { warnings: ["Malformed frontmatter: YAML parse error"] };
     }
     const value: unknown = document.toJS({ maxAliasCount: 0 });

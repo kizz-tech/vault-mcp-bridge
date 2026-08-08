@@ -5,6 +5,7 @@ export const IPC_CHANNELS = Object.freeze([
   "state:changed",
   "vault:choose",
   "server:configure",
+  "tunnel:configure",
   "setup:start",
   "sync:now",
   "sync:set-paused",

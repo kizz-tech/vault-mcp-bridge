@@ -1,5 +1,9 @@
 # Operations runbook
 
+> This runbook covers the advanced public HTTPS/OAuth deployment. The default
+> personal product uses OpenAI Secure MCP Tunnel; see
+> [`deploy/secure-tunnel/README.md`](../deploy/secure-tunnel/README.md).
+
 This runbook covers an operator-owned Linux host and one Vault Bridge
 installation. The desktop orchestrator normally performs these actions through
 SSH. If an operator must intervene, use only the exact installation project

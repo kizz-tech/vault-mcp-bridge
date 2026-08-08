@@ -62,6 +62,7 @@ dialog::backdrop { background: rgb(0 0 0 / 25%); }
 .sheet input:not([type="checkbox"]) { width: 100%; border: 1px solid var(--line); border-radius: 7px; padding: 9px 10px; color: var(--text); background: var(--bg); }
 .sheet input:focus { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 28%, transparent); }
 .sheet-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+.sheet-links { display: flex; align-items: center; gap: 2px; }
 .sheet-actions .primary { margin-top: 0; width: auto; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
 .journal-dialog .sheet { width: min(520px, calc(100vw - 56px)); }
