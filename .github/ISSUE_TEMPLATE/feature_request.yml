@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a product improvement without weakening the read-only security contract.
+title: "proposal: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What is difficult today, and who experiences it?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe observable success rather than an implementation preference.
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Security and ownership boundary
+      description: Explain whether this changes vault access, credentials, network exposure, or write behavior.
+    validations:
+      required: true
+  - type: checkboxes
+    id: contract
+    attributes:
+      label: Product contract
+      options:
+        - label: I understand that v1 is read-only and the local vault remains canonical.
+          required: true

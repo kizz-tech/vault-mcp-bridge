@@ -52,6 +52,14 @@ Do not place any of those values in source, `.env`, manifests, or logs.
 The absence of those credentials is an intentional fail-closed result, not a
 reason to call an unsigned package signed or notarized.
 
+An early binary may be published only as a GitHub **pre-release** when all of
+the following are true: the release title and notes say `preview`; the notes
+state that the app is not Developer ID signed or notarized; DMG and ZIP checks
+pass; the secret-free SHA-256 manifest is attached and verified; and normal
+users are directed to the inspected source/Codex path instead of being told to
+bypass Gatekeeper. A stable release requires Developer ID signing,
+notarization, stapling, and verification with `spctl` and `stapler`.
+
 Every packaged app must contain
 `Contents/Resources/agent/install-agent-command.mjs`. After installing a test
 artifact, run its installer, then execute `vault-bridge doctor --json` and

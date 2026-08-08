@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/kizz-tech/vault-mcp-bridge/security/advisories/new
+    about: Report security findings privately without vault or server evidence in a public issue.
+  - name: Installation prompt
+    url: https://github.com/kizz-tech/vault-mcp-bridge/blob/main/docs/install-with-codex.md
+    about: Start the supported agent-first installation flow.

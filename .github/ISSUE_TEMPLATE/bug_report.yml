@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible Vault Bridge problem using synthetic or redacted evidence.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include note text, vault paths, hostnames, tokens, fingerprints, keys, database files, or raw deployment logs. Use the Security tab for vulnerabilities.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Desktop application
+        - Agent-first installation
+        - Synchronization
+        - VPS runtime
+        - ChatGPT MCP tools
+        - Packaging or release
+        - Documentation
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: v0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior without private data.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Synthetic reproduction
+      description: Provide the smallest reproduction using the bundled fixture or redacted values.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, private paths, server identity, note content, and raw logs.
+          required: true
+        - label: This is not a security vulnerability requiring private disclosure.
+          required: true

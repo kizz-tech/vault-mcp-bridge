@@ -96,11 +96,11 @@ tunnel read/use permissions shown by the current OpenAI UI. Do not use an admin
 or unrestricted key as the long-lived runtime key.
 
 OpenAI product UI and eligibility change over time. Inspect the current account
-instead of assuming a plan or menu path. Official guidance currently describes
-Secure MCP Tunnel as the way to connect a private/local MCP server without
-exposing it to the public internet:
+instead of assuming a plan or menu path. Official guidance describes Secure
+MCP Tunnel as an outbound-only way to connect private MCP servers to supported
+OpenAI products without exposing them to the public internet:
 
-https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt
+https://developers.openai.com/api/docs/guides/secure-mcp-tunnels
 
 Leave the newly created runtime key in the clipboard. Do not print it, capture
 it in a screenshot, place it in JSON, or read it through an agent tool.
