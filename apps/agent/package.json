@@ -6,6 +6,7 @@
   "exports": {
     ".": {
       "types": "./src/private-sync.ts",
+      "development": "./src/private-sync.ts",
       "import": "./dist/src/private-sync.js"
     }
   },
